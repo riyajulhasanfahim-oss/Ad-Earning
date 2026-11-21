@@ -110,7 +110,7 @@ export function getDefaultWithdrawalSettings(economy: EconomyConfig): Withdrawal
     dailyLimitBdt: null,
     dailyLimitCount: 3,
     monthlyLimitBdt: null,
-    processingTimeLabel: 'Within 24 hours (Admin verification)',
+    processingTimeLabel: 'Within 24 hours (Verification)',
     allowedMethods: ['bkash', 'nagad', 'rocket', 'bank'],
   };
 }
@@ -134,7 +134,7 @@ export function pointsToBdt(points: number, pointsPerBdt: number | null): number
 
 export function formatBdt(amount: number | null): string {
   if (amount === null || Number.isNaN(amount)) {
-    return 'Rate Pending (Admin)';
+    return 'Rate Pending';
   }
   return `৳ ${amount.toLocaleString('en-US', {
     minimumFractionDigits: 2,
@@ -147,13 +147,13 @@ export function formatPoints(points: number): string {
 }
 
 export function isAdminUser(
-  user: Pick<UserProfile, 'email' | 'verified'>,
+  _user: Pick<UserProfile, 'email' | 'verified'>,
   hasAdminMarker = false,
   adminRole: AdminRole | null = null,
 ): boolean {
   if (adminRole === 'super_admin' || adminRole === 'admin') return true;
   if (hasAdminMarker && adminRole !== 'support_admin') return true;
-  return user.email.toLowerCase() === 'jiki58220@gmail.com' && user.verified;
+  return false;
 }
 
 export function isSupportOrHigherRole(
@@ -306,7 +306,7 @@ class AppConfigRepository {
         enabled: true,
         minPoints: baseMin,
         feePercent: 2,
-        processingWindow: 'Within 24 hours after admin verification',
+        processingWindow: 'Within 24 hours after verification',
         allowedAccountTypes: ['personal', 'agent', 'merchant'],
         accountHint: '11-digit bKash number (e.g. 017XXXXXXXX)',
       },
@@ -317,7 +317,7 @@ class AppConfigRepository {
         enabled: true,
         minPoints: baseMin,
         feePercent: 1.5,
-        processingWindow: 'Within 24 hours after admin verification',
+        processingWindow: 'Within 24 hours after verification',
         allowedAccountTypes: ['personal', 'agent', 'merchant'],
         accountHint: '11-digit Nagad number (e.g. 017XXXXXXXX)',
       },
@@ -328,7 +328,7 @@ class AppConfigRepository {
         enabled: true,
         minPoints: baseMin,
         feePercent: 1.8,
-        processingWindow: 'Within 24 hours after admin verification',
+        processingWindow: 'Within 24 hours after verification',
         allowedAccountTypes: ['personal', 'agent', 'merchant'],
         accountHint: '11-digit Rocket number (e.g. 017XXXXXXXX)',
       },
@@ -338,7 +338,7 @@ class AppConfigRepository {
         enabled: true,
         minPoints: baseMin !== null ? baseMin * 2 : null,
         feePercent: 3,
-        processingWindow: '1–2 business days after admin verification',
+        processingWindow: '1–2 business days after verification',
         allowedAccountTypes: ['bank_account'],
         accountHint: 'Account No, Account Holder & Bank/Branch Name',
       },

@@ -8,7 +8,6 @@ import {
   Eye,
   Gift,
   Receipt,
-  Settings2,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -49,11 +48,8 @@ interface WalletPageProps {
   transactions: TransactionRecord[];
   walletLedger: WalletLedgerEntry[];
   loading: boolean;
-  isAdmin: boolean;
   onNavigate: (page: AppPage) => void;
   onSelectWithdrawMethod: (methodId: PaymentMethodId) => void;
-  onOpenAdminSettings: () => void;
-  onOpenAdminWithdrawManager: () => void;
 }
 
 export const WalletPage: React.FC<WalletPageProps> = ({
@@ -64,11 +60,8 @@ export const WalletPage: React.FC<WalletPageProps> = ({
   transactions,
   walletLedger,
   loading,
-  isAdmin,
   onNavigate,
   onSelectWithdrawMethod,
-  onOpenAdminSettings,
-  onOpenAdminWithdrawManager,
 }) => {
   const { showToast } = useToast();
   const [calcPoints, setCalcPoints] = useState('1000');
@@ -118,7 +111,7 @@ export const WalletPage: React.FC<WalletPageProps> = ({
       return;
     }
     if (!economy.walletEnabled) {
-      showToast('Withdrawals are temporarily paused by the Administrator.', 'info');
+      showToast('Withdrawals are temporarily paused.', 'info');
       return;
     }
     onNavigate('withdraw');
@@ -191,26 +184,6 @@ export const WalletPage: React.FC<WalletPageProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap shrink-0">
-          {isAdmin && (
-            <>
-              <button
-                type="button"
-                onClick={onOpenAdminWithdrawManager}
-                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-[#06091B] text-xs font-extrabold inline-flex items-center gap-1.5 transition-colors shadow"
-              >
-                <ShieldCheck className="w-4 h-4" />
-                <span>Withdraw Queue</span>
-              </button>
-              <button
-                type="button"
-                onClick={onOpenAdminSettings}
-                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-amber-400/35 text-amber-300 text-xs font-extrabold inline-flex items-center gap-1.5 transition-colors"
-              >
-                <Settings2 className="w-4 h-4" />
-                <span>Rates</span>
-              </button>
-            </>
-          )}
           <button
             type="button"
             onClick={() => onNavigate('transactions')}
@@ -358,7 +331,7 @@ export const WalletPage: React.FC<WalletPageProps> = ({
               <div className="flex items-center justify-between text-xs pt-2 border-t border-white/10 tabular-nums">
                 <span className="text-slate-300">Estimated Value</span>
                 <span className="text-sm font-extrabold text-emerald-300">
-                  {calcBdt !== null ? formatBdt(calcBdt) : 'Set by Admin'}
+                  {calcBdt !== null ? formatBdt(calcBdt) : 'Rate Pending'}
                 </span>
               </div>
             </div>
@@ -464,10 +437,10 @@ export const WalletPage: React.FC<WalletPageProps> = ({
                 </p>
                 <p className="text-[11px] text-slate-300 tabular-nums">
                   {!method.enabled
-                    ? 'Paused by Admin'
+                    ? 'Temporarily Paused'
                     : method.minPoints !== null
                       ? `Min. ${formatPoints(method.minPoints)} Pts`
-                      : 'Min. Set by Admin'}
+                      : 'Min. Pending'}
                 </p>
               </div>
             </button>
@@ -488,7 +461,7 @@ export const WalletPage: React.FC<WalletPageProps> = ({
                   ? `${formatPoints(wallet.minimumWithdrawPoints)} Points${
                       minWithdrawBdt !== null ? ` (${formatBdt(minWithdrawBdt)})` : ''
                     }`
-                  : 'Configured by Admin Panel'}
+                  : 'Pending Configuration'}
               </span>
               {wallet.maximumWithdrawAmountBdt !== null && (
                 <span className="text-xs font-normal text-slate-300">

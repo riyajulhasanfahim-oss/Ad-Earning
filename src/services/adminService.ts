@@ -3,7 +3,11 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
+  getDocsFromServer,
+  limit,
   onSnapshot,
+  query,
   runTransaction,
   serverTimestamp,
   setDoc,
@@ -152,8 +156,9 @@ export async function verifyAdminAccessSession(): Promise<VerifiedAdminSession> 
     claimRole = null;
   }
 
-  const emailLower = (user.email || '').toLowerCase();
-  if (emailLower === 'jiki58220@gmail.com' && emailVerified) {
+  // Server-enforced Firestore Rules verification (never rely on client-side email string alone)
+  try {
+    await getDocsFromServer(query(collection(db, 'admins'), limit(1)));
     return {
       authorized: true,
       role: claimRole ?? 'super_admin',
@@ -162,37 +167,44 @@ export async function verifyAdminAccessSession(): Promise<VerifiedAdminSession> 
       emailVerified: true,
       verificationSource: claimRole ? 'custom_claims' : 'bootstrap_super_admin',
     };
+  } catch {
+    // Not a super_admin according to Firestore backend rules; check admin/support tier
   }
 
-  if (claimRole) {
-    return {
-      authorized: true,
-      role: claimRole,
-      claimRole,
-      claimsVerified: true,
-      emailVerified: true,
-      verificationSource: 'custom_claims',
-    };
-  }
-
-  // Fallback check against server-managed admins/{uid} doc (non-writable by any client in rules)
   try {
-    const adminSnap = await getDoc(doc(db, 'admins', user.uid));
+    const adminSnap = await getDocFromServer(doc(db, 'admins', user.uid));
     if (adminSnap.exists()) {
+      await getDocsFromServer(query(collection(db, 'adminLogs'), limit(1)));
       const r = String(adminSnap.data()?.role || 'admin');
       const docRole: AdminRole =
         r === 'super_admin' || r === 'admin' || r === 'support_admin' ? r : 'admin';
       return {
         authorized: true,
-        role: docRole,
-        claimRole: null,
-        claimsVerified: false,
+        role: claimRole ?? docRole,
+        claimRole,
+        claimsVerified: Boolean(claimRole),
         emailVerified: true,
-        verificationSource: 'admins_doc',
+        verificationSource: claimRole ? 'custom_claims' : 'admins_doc',
       };
     }
   } catch {
     // Denied by Firestore rules -> regular user
+  }
+
+  if (claimRole) {
+    try {
+      await getDocsFromServer(query(collection(db, 'adminLogs'), limit(1)));
+      return {
+        authorized: true,
+        role: claimRole,
+        claimRole,
+        claimsVerified: true,
+        emailVerified: true,
+        verificationSource: 'custom_claims',
+      };
+    } catch {
+      // Custom claim not accepted by Firestore backend rules
+    }
   }
 
   return {
@@ -202,7 +214,7 @@ export async function verifyAdminAccessSession(): Promise<VerifiedAdminSession> 
     claimsVerified: false,
     emailVerified,
     verificationSource: 'unauthorized',
-    reason: 'Unauthorized: This account does not hold verified Admin Custom Claims or server role privileges.',
+    reason: 'Unauthorized: This account does not hold verified Admin privileges.',
   };
 }
 

@@ -6,7 +6,6 @@ import {
   History,
   Info,
   Loader2,
-  Settings2,
   ShieldAlert,
   ShieldCheck,
 } from 'lucide-react';
@@ -51,9 +50,7 @@ interface WithdrawPageProps {
   paymentMethods: PaymentMethodConfig[];
   initialMethod: PaymentMethodId;
   userWithdrawals: WithdrawalRequestRecord[];
-  isAdmin: boolean;
   onNavigate: (page: AppPage) => void;
-  onOpenAdminWithdrawManager: () => void;
 }
 
 const ACCOUNT_TYPE_LABELS: Record<MfsAccountType, string> = {
@@ -79,9 +76,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
   paymentMethods,
   initialMethod,
   userWithdrawals,
-  isAdmin,
   onNavigate,
-  onOpenAdminWithdrawManager,
 }) => {
   const { showToast } = useToast();
 
@@ -250,22 +245,12 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
               </p>
               <p className="text-sm font-bold text-amber-300 tabular-nums">
                 Available Balance:{' '}
-                {maxAvailableBdt !== null ? formatBdt(maxAvailableBdt) : 'Admin Rate Pending'}
+                {maxAvailableBdt !== null ? formatBdt(maxAvailableBdt) : 'Rate Pending'}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap shrink-0">
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={onOpenAdminWithdrawManager}
-                className="min-h-[42px] px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-[#06091B] text-xs font-extrabold inline-flex items-center gap-1.5 transition-colors shadow"
-              >
-                <Settings2 className="w-4 h-4" />
-                <span>Manage Withdrawals</span>
-              </button>
-            )}
             <button
               type="button"
               onClick={() => onNavigate('withdrawal-history')}
@@ -286,7 +271,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
                 ? formatBdt(globalMinBdt)
                 : globalMinPts !== null
                   ? `${formatPoints(globalMinPts)} Pts`
-                  : 'Admin Unset'}
+                  : 'Pending'}
             </p>
           </div>
 
@@ -334,7 +319,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
         <GlassCard className="p-4 border-amber-400/35 bg-amber-500/10 flex items-center gap-3 text-xs text-amber-200">
           <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0" />
           <span>
-            Withdrawals are currently paused by the Administrator. Existing balances and pending
+            Withdrawals are currently paused. Existing balances and pending
             requests remain safely recorded in your Wallet Ledger.
           </span>
         </GlassCard>
@@ -345,7 +330,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
         <div className="lg:col-span-5 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold font-display text-white">Select Payment Method</h2>
-            <span className="text-[11px] text-slate-400">Admin-Controlled Channels</span>
+            <span className="text-[11px] text-slate-400">Supported Payout Channels</span>
           </div>
 
           <div className="space-y-2.5" role="radiogroup" aria-label="Payment method">
@@ -465,7 +450,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
                   Withdrawal Amount (BDT)
                 </label>
                 <span className="text-xs text-slate-400 tabular-nums">
-                  {minBdt !== null ? `Min. ${formatBdt(minBdt)}` : 'Min. set by Admin'}
+                  {minBdt !== null ? `Min. ${formatBdt(minBdt)}` : 'Min. pending'}
                   {maxRuleBdt !== null ? ` · Max ${formatBdt(maxRuleBdt)}` : ''}
                 </span>
               </div>
@@ -562,7 +547,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
                 maxLength={200}
                 value={optionalNote}
                 onChange={(e) => setOptionalNote(e.target.value)}
-                placeholder="Any verification note for Admin (optional)"
+                placeholder="Any verification note (optional)"
                 className="w-full h-11 px-4 rounded-xl bg-[#070B22] border border-white/15 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-violet-400"
               />
             </div>
@@ -704,8 +689,8 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
           <div className="flex items-start gap-2 text-xs text-slate-400">
             <ShieldCheck className="w-4 h-4 text-violet-400 shrink-0 mt-0.5" />
             <span>
-              Your reserved balance is marked Pending until reviewed and paid out manually by the
-              Administrator. You can track or cancel pending requests in Withdrawal History.
+              Your reserved balance is marked Pending until reviewed and paid out by our
+              verification team. You can track or cancel pending requests in Withdrawal History.
             </span>
           </div>
 

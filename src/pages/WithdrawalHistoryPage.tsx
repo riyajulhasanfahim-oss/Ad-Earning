@@ -7,7 +7,6 @@ import {
   Loader2,
   Plus,
   RefreshCw,
-  Settings2,
   ShieldAlert,
   ShieldCheck,
   XCircle,
@@ -33,9 +32,7 @@ import { useToast } from '../components/ui/ToastProvider';
 interface WithdrawalHistoryPageProps {
   requests: WithdrawalRequestRecord[];
   loading: boolean;
-  isAdmin: boolean;
   onNavigate: (page: AppPage) => void;
-  onOpenAdminWithdrawManager: () => void;
 }
 
 type StatusFilter = 'all' | WithdrawalStatus;
@@ -60,9 +57,7 @@ const METHOD_NAMES: Record<PaymentMethodId, string> = {
 export const WithdrawalHistoryPage: React.FC<WithdrawalHistoryPageProps> = ({
   requests,
   loading,
-  isAdmin,
   onNavigate,
-  onOpenAdminWithdrawManager,
 }) => {
   const { showToast } = useToast();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -175,16 +170,6 @@ export const WithdrawalHistoryPage: React.FC<WithdrawalHistoryPageProps> = ({
           </p>
         </div>
         <div className="flex items-center gap-2.5 flex-wrap">
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={onOpenAdminWithdrawManager}
-              className="min-h-[42px] px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-[#06091B] text-xs font-extrabold inline-flex items-center gap-1.5"
-            >
-              <Settings2 className="w-4 h-4" />
-              <span>Admin Queue</span>
-            </button>
-          )}
           <button
             type="button"
             onClick={() => onNavigate('withdraw')}

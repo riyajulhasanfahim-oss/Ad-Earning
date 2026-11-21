@@ -103,7 +103,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const handleGoogleAuth = async () => {
     if (mode === 'register' && !registrationEnabled) {
-      setRegError(`New user registrations are temporarily paused by ${siteName} administrators.`);
+      setRegError(`New user registrations on ${siteName} are temporarily unavailable.`);
       return;
     }
     setLoginError('');
@@ -156,7 +156,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!registrationEnabled) {
-      setRegError(`New user registrations are temporarily paused by ${siteName} administrators.`);
+      setRegError(`New user registrations on ${siteName} are temporarily unavailable.`);
       return;
     }
     const cleanName = fullName.trim();
@@ -479,7 +479,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   role="status"
                   className="rounded-xl bg-amber-500/10 border border-amber-400/35 px-3.5 py-2.5 text-xs text-amber-200 leading-relaxed text-center"
                 >
-                  New account registrations are temporarily paused by the administrator.
+                  New account registrations are temporarily unavailable. Please sign in instead.
                 </div>
               )}
 

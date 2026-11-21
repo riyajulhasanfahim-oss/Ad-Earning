@@ -16,7 +16,7 @@ export const FieldValue = admin.firestore.FieldValue;
 
 export type AdminRole = 'super_admin' | 'admin' | 'support_admin';
 
-export const BOOTSTRAP_SUPER_ADMIN_EMAIL = 'jiki58220@gmail.com';
+export const BOOTSTRAP_SUPER_ADMIN_EMAIL = 'riyajulhasanfahim@gmail.com';
 export const DEFAULT_GLOBAL_DAILY_AD_LIMIT = 20;
 export const MIN_SECONDS_BETWEEN_COMPLETIONS = 10;
 

@@ -7,7 +7,6 @@ import {
   Link2,
   Loader2,
   Play,
-  Settings2,
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
@@ -29,13 +28,11 @@ interface WatchAdsPageProps {
   economy: EconomyConfig;
   dailyAdLimit: DailyAdLimitRecord | null;
   adCompletions: AdCompletionRecord[];
-  isAdmin: boolean;
   isAuthenticated?: boolean;
   initiatingAdId: string | null;
   onStartWatchAd: (ad: Advertisement) => void;
   onNavigate: (page: AppPage) => void;
   onOpenAuth?: (mode?: 'login' | 'register') => void;
-  onOpenAdminManager: () => void;
 }
 
 const CATEGORY_TABS: Array<{ id: AdCategoryFilter; label: string }> = [
@@ -50,13 +47,11 @@ export const WatchAdsPage: React.FC<WatchAdsPageProps> = ({
   economy,
   dailyAdLimit,
   adCompletions,
-  isAdmin,
   isAuthenticated = true,
   initiatingAdId,
   onStartWatchAd,
   onNavigate,
   onOpenAuth,
-  onOpenAdminManager,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<AdCategoryFilter>('all');
 
@@ -154,16 +149,6 @@ export const WatchAdsPage: React.FC<WatchAdsPageProps> = ({
               <History className="w-4 h-4" />
               <span>Ad History</span>
             </button>
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={onOpenAdminManager}
-                className="min-h-[42px] px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-[#06091B] text-xs font-extrabold inline-flex items-center gap-1.5 transition-colors shadow-lg"
-              >
-                <Settings2 className="w-4 h-4" />
-                <span>Manage Ads</span>
-              </button>
-            )}
           </div>
         </div>
 
@@ -239,9 +224,7 @@ export const WatchAdsPage: React.FC<WatchAdsPageProps> = ({
           <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto leading-relaxed">
             {!isAuthenticated && ads.length === 0
               ? 'Verified Monetag and Adsterra advertisements load securely once you sign in with Email or Google.'
-              : isAdmin
-                ? 'Use the "Manage Ads" button above to create and activate verified Monetag or Adsterra campaigns.'
-                : 'Active policy-compliant advertisements published by the Administrator will appear here automatically.'}
+              : 'Active policy-compliant advertisements will appear here automatically.'}
           </p>
           {!isAuthenticated && ads.length === 0 && (
             <div className="pt-2">

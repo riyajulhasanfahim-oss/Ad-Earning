@@ -54,7 +54,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!registrationEnabled) {
-      setError(`New user registrations are temporarily paused by ${siteName} administrators.`);
+      setError(`New user registrations on ${siteName} are temporarily unavailable.`);
       return;
     }
     const cleanName = fullName.trim();
@@ -128,7 +128,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
 
   const handleGoogleSignUp = async () => {
     if (!registrationEnabled) {
-      setError(`New user registrations are temporarily paused by ${siteName} administrators.`);
+      setError(`New user registrations on ${siteName} are temporarily unavailable.`);
       return;
     }
     setError('');
@@ -180,8 +180,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
               role="status"
               className="rounded-xl bg-amber-500/10 border border-amber-400/35 px-3.5 py-3 text-xs text-amber-200 leading-relaxed text-center"
             >
-              New account registrations are currently paused by the administrator. Please check back
-              later or sign in to an existing account.
+              New account registrations are temporarily unavailable. Please check back later or sign
+              in to an existing account.
             </div>
           )}
 

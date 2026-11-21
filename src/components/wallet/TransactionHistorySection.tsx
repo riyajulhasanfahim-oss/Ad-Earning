@@ -49,10 +49,10 @@ const TYPE_LABELS: Record<TransactionType, string> = {
   daily_bonus: 'Daily Bonus',
   referral_bonus: 'Referral Bonus',
   withdrawal: 'Withdrawal',
-  admin_credit: 'Admin Credit',
-  admin_debit: 'Admin Debit',
+  admin_credit: 'Bonus Credit',
+  admin_debit: 'Balance Debit',
   refund: 'Refund',
-  admin_adjustment: 'Admin Adjustment',
+  admin_adjustment: 'Balance Adjustment',
 };
 
 export const TransactionHistorySection: React.FC<TransactionHistorySectionProps> = ({
@@ -270,8 +270,8 @@ export const TransactionHistorySection: React.FC<TransactionHistorySectionProps>
             <option value="daily_bonus">Daily Bonus</option>
             <option value="referral_bonus">Referral Bonus</option>
             <option value="withdrawal">Withdrawal</option>
-            <option value="admin_credit">Admin Credit</option>
-            <option value="admin_debit">Admin Debit</option>
+            <option value="admin_credit">Bonus Credit</option>
+            <option value="admin_debit">Balance Debit</option>
             <option value="refund">Refund</option>
           </select>
         </div>
@@ -339,7 +339,7 @@ export const TransactionHistorySection: React.FC<TransactionHistorySectionProps>
           <GlassCard className="p-8 text-center space-y-2">
             <p className="text-base font-bold text-white">No transactions yet</p>
             <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-              Verified Ad Rewards, Daily Bonuses, Referral Bonuses, Withdrawals, Admin Credits/Debits,
+              Verified Ad Rewards, Daily Bonuses, Referral Bonuses, Withdrawals, Account Adjustments,
               and Refunds will be permanently recorded here.
             </p>
           </GlassCard>

@@ -76,10 +76,10 @@ const TX_TYPE_LABELS: Record<TransactionType, string> = {
   daily_bonus: 'Daily Bonus',
   referral_bonus: 'Referral Bonus',
   withdrawal: 'Withdrawal',
-  admin_credit: 'Admin Credit',
-  admin_debit: 'Admin Debit',
+  admin_credit: 'Bonus Credit',
+  admin_debit: 'Balance Debit',
   refund: 'Refund',
-  admin_adjustment: 'Admin Adjustment',
+  admin_adjustment: 'Balance Adjustment',
 };
 
 const AMBIENT_PARTICLES = [

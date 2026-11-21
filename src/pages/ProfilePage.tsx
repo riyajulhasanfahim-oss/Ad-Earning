@@ -388,7 +388,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                   </p>
                   <p className="text-xs text-slate-400">
                     {!m.enabled
-                      ? 'Currently disabled by Admin'
+                      ? 'Currently unavailable'
                       : `${m.minPoints !== null ? `Min. ${m.minPoints.toLocaleString()} Pts · ` : ''}Fee ${m.feePercent}%`}
                   </p>
                 </div>

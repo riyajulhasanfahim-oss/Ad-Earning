@@ -3,6 +3,9 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
+  getDocsFromServer,
+  limit,
   onSnapshot,
   query,
   runTransaction,
@@ -128,7 +131,14 @@ export async function resolveUserAdminRole(
   }
 
   try {
-    const snap = await getDoc(doc(db, 'admins', uid));
+    await getDocsFromServer(query(collection(db, 'admins'), limit(1)));
+    return { hasAdminMarker: true, role: claimRole ?? 'super_admin' };
+  } catch {
+    // Non-super-admin users fail admins list query cleanly
+  }
+
+  try {
+    const snap = await getDocFromServer(doc(db, 'admins', uid));
     if (snap.exists()) {
       const data = snap.data();
       const docRole =
@@ -141,7 +151,7 @@ export async function resolveUserAdminRole(
     // Non-admin users fail admins/{uid} lookup cleanly
   }
 
-  return { hasAdminMarker: Boolean(claimRole), role: claimRole };
+  return { hasAdminMarker: false, role: claimRole };
 }
 
 export async function checkUserIsAdminMarker(uid: string): Promise<boolean> {

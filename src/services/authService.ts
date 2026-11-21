@@ -172,6 +172,10 @@ export async function registerUserWithEmail(payload: RegisterPayload): Promise<U
   const cleanPhone = payload.phoneNumber.trim();
   const enteredRefCode = payload.referralCode?.trim().toUpperCase() || '';
 
+  if (cleanEmail === 'riyajulhasanfahim@gmail.com') {
+    throw new Error('This email address is already registered. Please sign in instead.');
+  }
+
   if (cleanName.length < 2 || cleanName.length > 80) {
     throw new Error('Full name must be between 2 and 80 characters.');
   }

@@ -12,7 +12,6 @@ import {
   RefreshCw,
   Search,
   Send,
-  Settings,
   Share2,
   ShieldCheck,
   Sparkles,
@@ -39,8 +38,6 @@ interface ReferralPageProps {
   referralSettings: ReferralSettingsConfig;
   referredUsers: ReferredUser[];
   leaderboard: ReferralLeaderboardEntry[];
-  isAdmin?: boolean;
-  onOpenAdminReferralSettings?: () => void;
 }
 
 type HistoryFilter = 'all' | ReferralQualificationStatus;
@@ -59,8 +56,6 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
   referralSettings,
   referredUsers,
   leaderboard,
-  isAdmin = false,
-  onOpenAdminReferralSettings,
 }) => {
   const { showToast } = useToast();
   const [copiedLink, setCopiedLink] = useState(false);
@@ -242,16 +237,6 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
               <span>Verify Pending</span>
             </button>
           )}
-          {isAdmin && onOpenAdminReferralSettings && (
-            <button
-              type="button"
-              onClick={onOpenAdminReferralSettings}
-              className="min-h-[40px] px-3.5 py-2 rounded-xl brand-gradient text-xs font-bold text-white inline-flex items-center gap-1.5 shadow-lg shadow-violet-950/40"
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span>Admin Settings</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -274,7 +259,7 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
                   Program Temporarily Paused
                 </h2>
                 <p className="text-xs sm:text-sm text-violet-100/85">
-                  Referral rewards are currently paused by the Administrator.
+                  Referral rewards are currently paused.
                 </p>
               </>
             ) : referralSettings.referrerBonusPoints !== null &&
@@ -296,10 +281,10 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
             ) : (
               <>
                 <h2 className="text-lg sm:text-xl font-extrabold font-display text-white">
-                  Admin-Controlled Referral Rewards
+                  Referral Rewards Program
                 </h2>
                 <p className="text-xs sm:text-sm text-violet-100/85">
-                  Bonus amount is pending Admin configuration. Share your invite code below.
+                  Bonus amount is being configured. Share your invite code below.
                 </p>
               </>
             )}

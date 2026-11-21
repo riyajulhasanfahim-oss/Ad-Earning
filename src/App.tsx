@@ -3,26 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { AnimatePresence, motion } from 'motion/react';
 import { Loader2, LogOut, ShieldAlert, Wrench } from 'lucide-react';
 import {
   AdCompletionRecord,
-  AdminLogRecord,
-  AdminRole,
   AdSessionRecord,
   Advertisement,
   AppPage,
   DailyAdLimitRecord,
   DailyBonusState,
   EconomyConfig,
-  FraudLogRecord,
   NotificationItem,
   PaymentMethodConfig,
   PaymentMethodId,
   ReferralLeaderboardEntry,
-  ReferralLogRecord,
   ReferralSettingsConfig,
   ReferredUser,
   SiteSettingsConfig,
@@ -47,25 +43,17 @@ import {
   getDefaultDailyBonusState,
   getDefaultReferralSettings,
   getDefaultWithdrawalSettings,
-  isAdminUser,
 } from './services/appService';
 import {
-  resolveUserAdminRole,
   initiateAdSession,
   markFirestoreNotificationRead,
   subscribeToActiveAdvertisements,
   subscribeToAdCompletions,
-  subscribeToAdminLogs,
   subscribeToAdSessions,
-  subscribeToAllAdvertisements,
-  subscribeToAllReferrals,
-  subscribeToAllWithdrawalRequests,
   subscribeToDailyAdLimit,
   subscribeToDailyBonusState,
-  subscribeToFraudLogs,
   subscribeToPaymentMethods,
   subscribeToReferralLeaderboard,
-  subscribeToReferralLogs,
   subscribeToReferralSettings,
   subscribeToUserNotifications,
   subscribeToUserTransactions,
@@ -77,7 +65,12 @@ import {
 } from './services/dashboardService';
 import { AppShell } from './components/layout/AppShell';
 import type { AuthModalMode } from './components/auth/AuthModal';
-import { getDefaultSiteSettings, subscribeToSiteSettings } from './services/adminService';
+import {
+  getDefaultSiteSettings,
+  subscribeToSiteSettings,
+  VerifiedAdminSession,
+  verifyAdminAccessSession,
+} from './services/adminService';
 import { GlassCard } from './components/ui/GlassCard';
 import { useToast } from './components/ui/ToastProvider';
 import { HomePage } from './pages/HomePage';
@@ -118,24 +111,6 @@ const ProfilePage = lazy(() =>
 );
 const AdminApp = lazy(() =>
   import('./admin/AdminApp').then((m) => ({ default: m.AdminApp })),
-);
-const AdminAdManagerModal = lazy(() =>
-  import('./components/ads/AdminAdManagerModal').then((m) => ({ default: m.AdminAdManagerModal })),
-);
-const AdminWalletSettingsModal = lazy(() =>
-  import('./components/wallet/AdminWalletSettingsModal').then((m) => ({
-    default: m.AdminWalletSettingsModal,
-  })),
-);
-const AdminWithdrawalManagerModal = lazy(() =>
-  import('./components/wallet/AdminWithdrawalManagerModal').then((m) => ({
-    default: m.AdminWithdrawalManagerModal,
-  })),
-);
-const AdminReferralSettingsModal = lazy(() =>
-  import('./components/referral/AdminReferralSettingsModal').then((m) => ({
-    default: m.AdminReferralSettingsModal,
-  })),
 );
 
 const RouteLoadingFallback: React.FC<{ fullScreen?: boolean }> = ({ fullScreen = false }) => (
@@ -215,10 +190,13 @@ export default function App() {
 
   const [authReady, setAuthReady] = useState(false);
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [emailVerifiedFlag, setEmailVerifiedFlag] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
-  const [hasAdminMarker, setHasAdminMarker] = useState(false);
-  const [adminRole, setAdminRole] = useState<AdminRole | null>(null);
+  const [adminSession, setAdminSession] = useState<VerifiedAdminSession | null>(null);
+  const [adminVerifyStatus, setAdminVerifyStatus] = useState<'idle' | 'checking' | 'done'>('idle');
+  const adminManuallyExitedRef = useRef(false);
+  const isAdminAuthorizedRef = useRef(false);
 
   // Real-time Firestore dashboard, ads, wallet, withdrawals & referral streams
   const [economy, setEconomy] = useState<EconomyConfig>(INITIAL_ECONOMY);
@@ -227,17 +205,13 @@ export default function App() {
     getDefaultWithdrawalSettings(INITIAL_ECONOMY),
   );
   const [userWithdrawals, setUserWithdrawals] = useState<WithdrawalRequestRecord[]>([]);
-  const [adminAllWithdrawals, setAdminAllWithdrawals] = useState<WithdrawalRequestRecord[]>([]);
-  const [adminLogs, setAdminLogs] = useState<AdminLogRecord[]>([]);
 
   const [walletDoc, setWalletDoc] = useState<WalletDocRecord | null>(null);
   const [walletLedger, setWalletLedger] = useState<WalletLedgerEntry[]>([]);
   const [activeAds, setActiveAds] = useState<Advertisement[]>([]);
-  const [adminAllAds, setAdminAllAds] = useState<Advertisement[]>([]);
   const [adSessions, setAdSessions] = useState<AdSessionRecord[]>([]);
   const [adCompletions, setAdCompletions] = useState<AdCompletionRecord[]>([]);
   const [dailyAdLimit, setDailyAdLimit] = useState<DailyAdLimitRecord | null>(null);
-  const [fraudLogs, setFraudLogs] = useState<FraudLogRecord[]>([]);
 
   const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
   const [referredUsers, setReferredUsers] = useState<ReferredUser[]>([]);
@@ -245,8 +219,6 @@ export default function App() {
     getDefaultReferralSettings(),
   );
   const [referralLeaderboard, setReferralLeaderboard] = useState<ReferralLeaderboardEntry[]>([]);
-  const [adminAllReferrals, setAdminAllReferrals] = useState<ReferredUser[]>([]);
-  const [referralLogs, setReferralLogs] = useState<ReferralLogRecord[]>([]);
 
   const [dailyBonus, setDailyBonus] = useState<DailyBonusState>(() =>
     getDefaultDailyBonusState(),
@@ -258,32 +230,29 @@ export default function App() {
   const [preferredWithdrawMethod, setPreferredWithdrawMethod] =
     useState<PaymentMethodId>('bkash');
 
-  // Active ad watching & admin modals state
+  // Active ad watching state
   const [activeWatchAd, setActiveWatchAd] = useState<Advertisement | null>(null);
   const [activeWatchSessionId, setActiveWatchSessionId] = useState<string | null>(null);
   const [initiatingAdId, setInitiatingAdId] = useState<string | null>(null);
-  const [adminModalOpen, setAdminModalOpen] = useState(false);
-  const [adminWalletModalOpen, setAdminWalletModalOpen] = useState(false);
-  const [adminWithdrawModalOpen, setAdminWithdrawModalOpen] = useState(false);
-  const [adminReferralModalOpen, setAdminReferralModalOpen] = useState(false);
 
-  const isAdmin = useMemo(() => {
-    if (!firebaseUser) return false;
-    return isAdminUser(
-      {
-        email: firebaseUser.email ?? '',
-        verified: Boolean(firebaseUser.emailVerified),
-      },
-      hasAdminMarker,
-      adminRole,
-    );
-  }, [firebaseUser, hasAdminMarker, adminRole]);
+  useEffect(() => {
+    isAdminAuthorizedRef.current = Boolean(adminSession?.authorized);
+  }, [adminSession?.authorized]);
 
-  // Sync /admin route changes and live appSettings/site
+  // Guard /admin URL changes and subscribe to live appSettings/site
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handlePop = () => {
-      setIsAdminRoute(window.location.pathname.toLowerCase().startsWith('/admin'));
+      const wantsAdmin = window.location.pathname.toLowerCase().startsWith('/admin');
+      if (wantsAdmin && !isAdminAuthorizedRef.current) {
+        window.history.replaceState(null, '', '/');
+        setIsAdminRoute(false);
+        return;
+      }
+      if (wantsAdmin && isAdminAuthorizedRef.current) {
+        adminManuallyExitedRef.current = false;
+      }
+      setIsAdminRoute(wantsAdmin);
     };
     window.addEventListener('popstate', handlePop);
     const unsubSite = subscribeToSiteSettings(
@@ -304,9 +273,10 @@ export default function App() {
   useEffect(() => {
     if (typeof document === 'undefined') return;
     if (siteSettings.websiteName) {
-      document.title = isAdminRoute
-        ? `${siteSettings.websiteName} — Admin Console`
-        : `${siteSettings.websiteName} — Watch Ads & Earn Rewards`;
+      document.title =
+        isAdminRoute && adminSession?.authorized
+          ? `${siteSettings.websiteName} — Admin Console`
+          : `${siteSettings.websiteName} — Watch Ads & Earn Rewards`;
     }
     if (siteSettings.websiteFaviconUrl) {
       let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
@@ -317,62 +287,137 @@ export default function App() {
       }
       link.href = siteSettings.websiteFaviconUrl;
     }
-  }, [siteSettings.websiteName, siteSettings.websiteFaviconUrl, isAdminRoute]);
+  }, [siteSettings.websiteName, siteSettings.websiteFaviconUrl, isAdminRoute, adminSession?.authorized]);
 
   // Subscribe to Firebase Auth state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setFirebaseUser(user);
+      setEmailVerifiedFlag(Boolean(user?.emailVerified));
       setAuthReady(true);
 
       if (!user) {
+        adminManuallyExitedRef.current = false;
+        setAdminSession(null);
+        setAdminVerifyStatus('done');
+        setIsAdminRoute(false);
+        if (
+          typeof window !== 'undefined' &&
+          window.location.pathname.toLowerCase().startsWith('/admin')
+        ) {
+          window.history.replaceState(null, '', '/');
+        }
         setUserProfile(null);
-        setHasAdminMarker(false);
-        setAdminRole(null);
         setFirestoreMethods([]);
         setUserWithdrawals([]);
-        setAdminAllWithdrawals([]);
-        setAdminLogs([]);
         setWalletDoc(null);
         setWalletLedger([]);
         setReferredUsers([]);
         setReferralSettings(getDefaultReferralSettings());
         setReferralLeaderboard([]);
-        setAdminAllReferrals([]);
-        setReferralLogs([]);
         setTransactions([]);
         setActiveAds([]);
-        setAdminAllAds([]);
         setAdSessions([]);
         setAdCompletions([]);
         setDailyAdLimit(null);
-        setFraudLogs([]);
         setFirestoreNotifications([]);
         setDailyBonus(getDefaultDailyBonusState());
         setProfileLoading(false);
         setDashboardDataLoaded(false);
         setActiveWatchAd(null);
         setActiveWatchSessionId(null);
-        setAdminModalOpen(false);
-        setAdminWalletModalOpen(false);
-        setAdminWithdrawModalOpen(false);
-        setAdminReferralModalOpen(false);
         setCurrentPage((prev) => (PUBLIC_BROWSE_PAGES.includes(prev) ? prev : 'home'));
       } else {
         setAuthModalOpen(false);
+        if (user.emailVerified) {
+          setAdminVerifyStatus('checking');
+        } else {
+          setAdminSession(null);
+          setAdminVerifyStatus('done');
+          setIsAdminRoute(false);
+          if (
+            typeof window !== 'undefined' &&
+            window.location.pathname.toLowerCase().startsWith('/admin')
+          ) {
+            window.history.replaceState(null, '', '/');
+          }
+        }
         setProfileLoading(true);
-        void resolveUserAdminRole(user.uid).then((resolved) => {
-          setHasAdminMarker(resolved.hasAdminMarker);
-          setAdminRole(resolved.role);
-        });
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // Subscribe to Firestore collections ONLY when authenticated
+  // Server-enforced Admin Role verification & automatic role-based routing
   useEffect(() => {
     if (!authReady || !firebaseUser) return;
+
+    if (!emailVerifiedFlag) {
+      setAdminSession(null);
+      setAdminVerifyStatus('done');
+      setIsAdminRoute(false);
+      if (
+        typeof window !== 'undefined' &&
+        window.location.pathname.toLowerCase().startsWith('/admin')
+      ) {
+        window.history.replaceState(null, '', '/');
+      }
+      return;
+    }
+
+    let cancelled = false;
+    setAdminVerifyStatus('checking');
+
+    void verifyAdminAccessSession()
+      .then((verified) => {
+        if (cancelled) return;
+        setAdminSession(verified);
+        setAdminVerifyStatus('done');
+
+        if (verified.authorized) {
+          if (!adminManuallyExitedRef.current) {
+            setPendingAction(null);
+            setAuthModalOpen(false);
+            setAuthModalReason('');
+            setIsAdminRoute(true);
+            if (
+              typeof window !== 'undefined' &&
+              !window.location.pathname.toLowerCase().startsWith('/admin')
+            ) {
+              window.history.replaceState(null, '', '/admin');
+            }
+          }
+        } else {
+          setIsAdminRoute(false);
+          if (
+            typeof window !== 'undefined' &&
+            window.location.pathname.toLowerCase().startsWith('/admin')
+          ) {
+            window.history.replaceState(null, '', '/');
+          }
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAdminSession(null);
+        setAdminVerifyStatus('done');
+        setIsAdminRoute(false);
+        if (
+          typeof window !== 'undefined' &&
+          window.location.pathname.toLowerCase().startsWith('/admin')
+        ) {
+          window.history.replaceState(null, '', '/');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, firebaseUser, emailVerifiedFlag]);
+
+  // Subscribe to User Portal Firestore collections ONLY when authenticated on User Portal
+  useEffect(() => {
+    if (!authReady || !firebaseUser || isAdminRoute) return;
 
     let initialSettled = 0;
     const markSettled = () => {
@@ -454,7 +499,7 @@ export default function App() {
       () => {},
     );
 
-    const unsubActiveAds = firebaseUser.emailVerified
+    const unsubActiveAds = emailVerifiedFlag
       ? subscribeToActiveAdvertisements(
           (adsList) => {
             setActiveAds(adsList);
@@ -510,42 +555,6 @@ export default function App() {
       () => {},
     );
 
-    const unsubAdminAds = isAdmin
-      ? subscribeToAllAdvertisements(
-          (allAds) => {
-            setAdminAllAds(allAds);
-          },
-          () => {},
-        )
-      : () => {};
-
-    const unsubAdminWithdrawals = isAdmin
-      ? subscribeToAllWithdrawalRequests(
-          (allReqs) => {
-            setAdminAllWithdrawals(allReqs);
-          },
-          () => {},
-        )
-      : () => {};
-
-    const unsubAdminLogs = isAdmin
-      ? subscribeToAdminLogs(
-          (logs) => {
-            setAdminLogs(logs);
-          },
-          () => {},
-        )
-      : () => {};
-
-    const unsubFraudLogs = isAdmin
-      ? subscribeToFraudLogs(
-          (logs) => {
-            setFraudLogs(logs);
-          },
-          () => {},
-        )
-      : () => {};
-
     const unsubReferralSettings = subscribeToReferralSettings(
       (cfg) => {
         setReferralSettings(cfg);
@@ -559,24 +568,6 @@ export default function App() {
       },
       () => {},
     );
-
-    const unsubAdminReferrals = isAdmin
-      ? subscribeToAllReferrals(
-          (refs) => {
-            setAdminAllReferrals(refs);
-          },
-          () => {},
-        )
-      : () => {};
-
-    const unsubReferralLogs = isAdmin
-      ? subscribeToReferralLogs(
-          (logs) => {
-            setReferralLogs(logs);
-          },
-          () => {},
-        )
-      : () => {};
 
     return () => {
       unsubProfile();
@@ -594,16 +585,10 @@ export default function App() {
       unsubPaymentMethods();
       unsubWithdrawSettings();
       unsubUserWithdrawals();
-      unsubAdminAds();
-      unsubAdminWithdrawals();
-      unsubAdminLogs();
-      unsubFraudLogs();
       unsubReferralSettings();
       unsubLeaderboard();
-      unsubAdminReferrals();
-      unsubReferralLogs();
     };
-  }, [authReady, firebaseUser, firebaseUser?.emailVerified, isAdmin, showToast]);
+  }, [authReady, firebaseUser, emailVerifiedFlag, isAdminRoute, showToast]);
 
   const openAuthModal = (
     mode: AuthModalMode = 'login',
@@ -829,23 +814,34 @@ export default function App() {
     };
   }, [activeWatchSessionId, activeWatchAd, adSessions, activeUser.uid, dailyAdLimit?.dhakaDate]);
 
-  // Dedicated, strictly separated Admin Panel at /admin
+  // Strictly server-verified Admin Panel at /admin (never exposes Admin login or controls to non-admins)
   if (isAdminRoute) {
-    return (
-      <Suspense fallback={<RouteLoadingFallback fullScreen />}>
-        <AdminApp
-          onExitToUserSite={() => {
-            if (typeof window !== 'undefined') {
-              window.history.pushState(null, '', '/');
-            }
-            setIsAdminRoute(false);
-          }}
-        />
-      </Suspense>
-    );
+    if (!authReady || (firebaseUser && emailVerifiedFlag && adminVerifyStatus !== 'done')) {
+      return <RouteLoadingFallback fullScreen />;
+    }
+    if (firebaseUser && emailVerifiedFlag && adminSession?.authorized) {
+      return (
+        <Suspense fallback={<RouteLoadingFallback fullScreen />}>
+          <AdminApp
+            onExitToUserSite={() => {
+              adminManuallyExitedRef.current = true;
+              if (typeof window !== 'undefined') {
+                window.history.pushState(null, '', '/');
+              }
+              setIsAdminRoute(false);
+            }}
+          />
+        </Suspense>
+      );
+    }
   }
 
-  // Maintenance Mode Gate for User Portal (Admin Panel remains active at /admin)
+  // Hold briefly while verifying a newly logged-in verified user so an authorized Admin transitions directly to Admin Panel
+  if (firebaseUser && emailVerifiedFlag && adminVerifyStatus === 'checking') {
+    return <RouteLoadingFallback fullScreen />;
+  }
+
+  // Maintenance Mode Gate for User Portal
   if (siteSettings.maintenanceMode) {
     return (
       <div className="min-h-dvh flex items-center justify-center p-4 bg-[#06091B] text-slate-100">
@@ -866,33 +862,21 @@ export default function App() {
               {siteSettings.supportContact ? ` · ${siteSettings.supportContact}` : ''}
             </p>
           )}
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => {
-                if (typeof window !== 'undefined') {
-                  window.history.pushState(null, '', '/admin');
-                }
-                setIsAdminRoute(true);
-              }}
-              className="w-full min-h-[42px] rounded-xl brand-button text-white text-xs font-bold"
-            >
-              Open Admin Console (/admin)
-            </button>
-          )}
         </GlassCard>
       </div>
     );
   }
 
   // Email Verification Gate (only when signed in with unverified email/password)
-  if (firebaseUser && !firebaseUser.emailVerified) {
+  if (firebaseUser && !emailVerifiedFlag) {
     return (
       <Suspense fallback={<RouteLoadingFallback fullScreen />}>
         <VerifyEmailPage
           email={firebaseUser.email ?? activeUser.email}
           onVerified={async () => {
             await firebaseUser.reload();
+            await firebaseUser.getIdToken(true);
+            setEmailVerifiedFlag(Boolean(auth.currentUser?.emailVerified));
             setFirebaseUser(auth.currentUser);
             setCurrentPage('home');
           }}
@@ -974,11 +958,9 @@ export default function App() {
             economy={economy}
             dailyAdLimit={dailyAdLimit}
             adCompletions={adCompletions}
-            isAdmin={isAdmin}
             initiatingAdId={initiatingAdId}
             onStartWatchAd={handleStartWatchAd}
             onNavigate={handleNavigate}
-            onOpenAdminManager={() => setAdminModalOpen(true)}
           />
         );
       case 'ad-history':
@@ -996,13 +978,11 @@ export default function App() {
             economy={economy}
             dailyAdLimit={dailyAdLimit}
             adCompletions={adCompletions}
-            isAdmin={isAdmin}
             isAuthenticated={Boolean(firebaseUser)}
             initiatingAdId={initiatingAdId}
             onStartWatchAd={handleStartWatchAd}
             onNavigate={handleNavigate}
             onOpenAuth={(mode) => openAuthModal(mode ?? 'login')}
-            onOpenAdminManager={() => setAdminModalOpen(true)}
           />
         );
       case 'wallet':
@@ -1015,11 +995,8 @@ export default function App() {
             transactions={transactions}
             walletLedger={walletLedger}
             loading={!dashboardDataLoaded && profileLoading}
-            isAdmin={isAdmin}
             onNavigate={handleNavigate}
             onSelectWithdrawMethod={handleSelectWithdrawMethod}
-            onOpenAdminSettings={() => setAdminWalletModalOpen(true)}
-            onOpenAdminWithdrawManager={() => setAdminWithdrawModalOpen(true)}
           />
         );
       case 'withdraw':
@@ -1033,9 +1010,7 @@ export default function App() {
             paymentMethods={paymentMethods}
             initialMethod={preferredWithdrawMethod}
             userWithdrawals={userWithdrawals}
-            isAdmin={isAdmin}
             onNavigate={handleNavigate}
-            onOpenAdminWithdrawManager={() => setAdminWithdrawModalOpen(true)}
           />
         );
       case 'withdrawal-history':
@@ -1043,9 +1018,7 @@ export default function App() {
           <WithdrawalHistoryPage
             requests={userWithdrawals}
             loading={!dashboardDataLoaded && profileLoading}
-            isAdmin={isAdmin}
             onNavigate={handleNavigate}
-            onOpenAdminWithdrawManager={() => setAdminWithdrawModalOpen(true)}
           />
         );
       case 'referral':
@@ -1055,8 +1028,6 @@ export default function App() {
             referralSettings={referralSettings}
             referredUsers={referredUsers}
             leaderboard={referralLeaderboard}
-            isAdmin={isAdmin}
-            onOpenAdminReferralSettings={() => setAdminReferralModalOpen(true)}
           />
         );
       case 'transactions':
@@ -1148,45 +1119,6 @@ export default function App() {
         </Suspense>
       )}
 
-      {isAdmin && (
-        <Suspense fallback={null}>
-          <AdminAdManagerModal
-            open={adminModalOpen}
-            onClose={() => setAdminModalOpen(false)}
-            ads={adminAllAds}
-            economy={economy}
-            fraudLogs={fraudLogs}
-          />
-          <AdminWalletSettingsModal
-            open={adminWalletModalOpen}
-            onClose={() => setAdminWalletModalOpen(false)}
-            economy={economy}
-          />
-          <AdminWithdrawalManagerModal
-            open={adminWithdrawModalOpen}
-            onClose={() => setAdminWithdrawModalOpen(false)}
-            requests={adminAllWithdrawals}
-            paymentMethods={paymentMethods}
-            withdrawalSettings={withdrawalSettings}
-            adminLogs={adminLogs}
-            adminUser={{
-              uid: activeUser.uid,
-              email: activeUser.email,
-            }}
-          />
-          <AdminReferralSettingsModal
-            open={adminReferralModalOpen}
-            onClose={() => setAdminReferralModalOpen(false)}
-            settings={referralSettings}
-            allReferrals={adminAllReferrals}
-            referralLogs={referralLogs}
-            adminUser={{
-              uid: activeUser.uid,
-              email: activeUser.email,
-            }}
-          />
-        </Suspense>
-      )}
       {!authModalOpen && currentPage !== 'watch-ad' && (
         <InstallAppBanner siteName={siteSettings.websiteName} />
       )}

@@ -82,7 +82,6 @@ import {
   subscribeToAdNetworks,
   subscribeToAdPlacements,
 } from '../services/adNetworkService';
-import { AdminAuthGate } from './AdminAuthGate';
 import { AdminLayout } from './AdminLayout';
 import {
   subscribeToFraudReports,
@@ -373,17 +372,24 @@ export const AdminApp: React.FC<AdminAppProps> = ({ onExitToUserSite }) => {
     }
   };
 
-  if (!authReady || verifying || !firebaseUser || !session?.authorized || !session.role) {
+  useEffect(() => {
+    if (!authReady || verifying) return;
+    if (!firebaseUser || !session?.authorized || !session.role) {
+      onExitToUserSite();
+    }
+  }, [authReady, verifying, firebaseUser, session?.authorized, session?.role, onExitToUserSite]);
+
+  if (!authReady || verifying) {
     return (
-      <AdminAuthGate
-        firebaseUser={firebaseUser}
-        verifying={!authReady || verifying}
-        session={session}
-        siteName={siteSettings.websiteName}
-        onExitToUserSite={onExitToUserSite}
-        onRefreshVerification={refreshVerification}
-      />
+      <div className="min-h-dvh flex flex-col items-center justify-center p-6 bg-[#06091B] text-slate-300 gap-3">
+        <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
+        <span className="text-xs font-medium text-slate-400">Loading view...</span>
+      </div>
     );
+  }
+
+  if (!firebaseUser || !session?.authorized || !session.role) {
+    return null;
   }
 
   const adminUser = {
