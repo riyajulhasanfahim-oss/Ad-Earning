@@ -75,7 +75,7 @@ export const InstallAppBanner: React.FC<InstallAppBannerProps> = ({
           aria-label="Install application banner"
           className="fixed z-40 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] left-3 right-3 max-w-md mx-auto lg:left-auto lg:right-6 lg:bottom-6 lg:w-[360px]"
         >
-          <div className="rounded-2xl px-3 py-2.5 flex items-center gap-2.5 bg-[#0E1740]/95 backdrop-blur-xl border border-cyan-300/35 shadow-[0_14px_34px_rgba(3,6,24,0.88),0_0_24px_rgba(56,189,248,0.22)]">
+          <div className="rounded-2xl px-3 py-2.5 flex items-center gap-2.5 bg-[#0E1740]/96 backdrop-blur-md border border-cyan-300/35 shadow-[0_12px_28px_rgba(3,6,24,0.85),0_0_20px_rgba(56,189,248,0.2)]">
             <img
               src="/pwa-192x192.png"
               alt={`${siteName} logo`}

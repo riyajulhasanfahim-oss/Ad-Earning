@@ -161,7 +161,18 @@ export function useGuestDemoEarnings(enabled: boolean): GuestDemoSnapshot {
   useEffect(() => {
     if (!enabled) return;
 
+    let lastInteractionAt = 0;
+    const markScrolling = () => {
+      lastInteractionAt = Date.now();
+    };
+
+    window.addEventListener('scroll', markScrolling, { passive: true });
+    window.addEventListener('touchmove', markScrolling, { passive: true });
+
     const timer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (Date.now() - lastInteractionAt < 1000) return;
+
       setTickIndex((prevTick) => {
         const nextTick = prevTick + 1;
         const step = DEMO_ROTATING_INCREMENTS[nextTick % DEMO_ROTATING_INCREMENTS.length];
@@ -203,9 +214,13 @@ export function useGuestDemoEarnings(enabled: boolean): GuestDemoSnapshot {
 
         return nextTick;
       });
-    }, 4200);
+    }, 5500);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('scroll', markScrolling);
+      window.removeEventListener('touchmove', markScrolling);
+    };
   }, [enabled]);
 
   void tickIndex;

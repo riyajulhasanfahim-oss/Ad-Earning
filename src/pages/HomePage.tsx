@@ -104,7 +104,7 @@ const MiniCornerBars: React.FC<{ barClass: string }> = ({ barClass }) => (
   </div>
 );
 
-export const HomePage: React.FC<HomePageProps> = ({
+export const HomePage: React.FC<HomePageProps> = React.memo(({
   user,
   wallet,
   economy,
@@ -367,22 +367,34 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   return (
     <div className="relative space-y-3 sm:space-y-4">
-      {/* Multi-Tone Deep Royal Blue & Violet Ambient Lighting Layer */}
-      <div aria-hidden="true" className="pointer-events-none fixed inset-0 overflow-hidden z-0">
-        <div className="ambient-orb absolute -top-28 -left-24 w-80 h-80 sm:w-[460px] sm:h-[460px] rounded-full bg-blue-600/24 blur-[110px]" />
+      {/* Lightweight Zero-Blur Radial Ambient Glows (GPU Composited, 0ms Blur Cost) */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 overflow-hidden z-0 transform-gpu"
+      >
         <div
-          className="ambient-orb absolute top-16 -right-24 w-80 h-80 sm:w-[440px] sm:h-[440px] rounded-full bg-violet-600/22 blur-[115px]"
-          style={{ animationDelay: '-4.2s' }}
+          className="absolute -top-28 -left-24 w-80 h-80 sm:w-[460px] sm:h-[460px] rounded-full"
+          style={{
+            background: 'radial-gradient(circle, rgba(37, 99, 235, 0.24) 0%, transparent 70%)',
+          }}
         />
         <div
-          className="ambient-orb hidden sm:block absolute bottom-8 left-1/3 w-96 h-96 rounded-full bg-emerald-500/12 blur-[120px]"
-          style={{ animationDelay: '-7.5s' }}
+          className="absolute top-16 -right-24 w-80 h-80 sm:w-[440px] sm:h-[440px] rounded-full"
+          style={{
+            background: 'radial-gradient(circle, rgba(124, 58, 237, 0.22) 0%, transparent 70%)',
+          }}
+        />
+        <div
+          className="hidden sm:block absolute bottom-8 left-1/3 w-96 h-96 rounded-full"
+          style={{
+            background: 'radial-gradient(circle, rgba(16, 185, 129, 0.14) 0%, transparent 70%)',
+          }}
         />
         {AMBIENT_PARTICLES.map((p, idx) => (
           <span
             key={idx}
-            className={`ambient-particle absolute rounded-full ${p.size} ${p.color} blur-[0.5px]`}
-            style={{ top: p.top, left: p.left, animationDelay: p.delay }}
+            className={`absolute rounded-full opacity-45 ${p.size} ${p.color}`}
+            style={{ top: p.top, left: p.left }}
           />
         ))}
       </div>
@@ -390,17 +402,21 @@ export const HomePage: React.FC<HomePageProps> = ({
       {/* Foreground Content Layer */}
       <div className="relative z-10 space-y-3 sm:space-y-4">
         {/* Compact User Header Strip */}
-        <div className="rounded-2xl px-3 py-2 sm:px-4 sm:py-2.5 flex items-center justify-between gap-2.5 bg-gradient-to-r from-[#0F246E]/90 via-[#152878]/90 to-[#1E1E6B]/90 border border-cyan-300/35 shadow-[0_10px_24px_-12px_rgba(14,165,233,0.55),inset_0_1px_0_rgba(255,255,255,0.18)]">
+        <div className="rounded-2xl px-3 py-2 sm:px-4 sm:py-2.5 flex items-center justify-between gap-2.5 bg-gradient-to-r from-[#0F246E]/92 via-[#152878]/92 to-[#1E1E6B]/92 border border-cyan-300/35 shadow-[0_8px_22px_-12px_rgba(14,165,233,0.5),inset_0_1px_0_rgba(255,255,255,0.18)]">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="relative shrink-0">
               <div
                 aria-hidden="true"
-                className="absolute -inset-0.5 rounded-full bg-gradient-to-tr from-cyan-400 via-blue-500 to-amber-400 opacity-75 blur-[4px]"
+                className="absolute -inset-1 rounded-full opacity-75"
+                style={{
+                  background:
+                    'radial-gradient(circle, rgba(56, 189, 248, 0.55) 0%, transparent 70%)',
+                }}
               />
               <UserAvatarGraphic className="relative w-9 h-9 sm:w-11 sm:h-11" />
               <span
                 aria-hidden="true"
-                className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-[#0B1C54] shadow-[0_0_8px_rgba(52,211,153,0.9)]"
+                className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-[#0B1C54]"
               />
             </div>
             <div className="min-w-0">
@@ -410,7 +426,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 </h2>
                 {isAuthenticated && user.verified && (
                   <CheckCircle2
-                    className="w-3.5 h-3.5 text-cyan-300 shrink-0 drop-shadow-[0_0_8px_rgba(34,211,238,0.85)]"
+                    className="w-3.5 h-3.5 text-cyan-300 shrink-0"
                     aria-label="Verified account"
                   />
                 )}
@@ -430,9 +446,9 @@ export const HomePage: React.FC<HomePageProps> = ({
           <button
             type="button"
             onClick={() => (isAuthenticated ? onNavigate('profile') : onOpenAuth?.('login'))}
-            className={`min-h-[36px] sm:min-h-[40px] px-3.5 py-1.5 rounded-full text-xs font-extrabold inline-flex items-center gap-1 whitespace-nowrap shrink-0 transition-all ${
+            className={`min-h-[36px] sm:min-h-[40px] px-3.5 py-1.5 rounded-full text-xs font-extrabold inline-flex items-center gap-1 whitespace-nowrap shrink-0 transition-transform ${
               isAuthenticated
-                ? 'bg-gradient-to-r from-cyan-500/25 to-violet-500/25 hover:from-cyan-500/35 hover:to-violet-500/35 border border-cyan-300/50 text-white shadow-[0_0_14px_rgba(56,189,248,0.3)] active:scale-[0.97]'
+                ? 'bg-gradient-to-r from-cyan-500/25 to-violet-500/25 hover:from-cyan-500/35 hover:to-violet-500/35 border border-cyan-300/50 text-white active:scale-[0.97]'
                 : 'gold-cta-button'
             }`}
           >
@@ -447,20 +463,26 @@ export const HomePage: React.FC<HomePageProps> = ({
           className="home-balance-card rounded-2xl sm:rounded-3xl p-3.5 sm:p-5 flex flex-col justify-between gap-2.5 sm:gap-3.5"
         >
           <div aria-hidden="true" className="home-light-sweep" />
-          {/* Ambient Cyan & Gold Aura Reflections */}
+          {/* Ambient Cyan & Gold Aura Reflections (Zero-Blur Radial Gradients) */}
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -top-14 -right-10 w-44 h-44 rounded-full bg-cyan-300/25 blur-3xl"
+            className="pointer-events-none absolute -top-14 -right-10 w-52 h-52 rounded-full"
+            style={{
+              background: 'radial-gradient(circle, rgba(103, 232, 249, 0.25) 0%, transparent 70%)',
+            }}
           />
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -bottom-14 -left-10 w-40 h-40 rounded-full bg-violet-500/25 blur-3xl"
+            className="pointer-events-none absolute -bottom-14 -left-10 w-48 h-48 rounded-full"
+            style={{
+              background: 'radial-gradient(circle, rgba(139, 92, 246, 0.25) 0%, transparent 70%)',
+            }}
           />
 
           <div className="relative z-10 flex items-center justify-between gap-3">
             <div className="min-w-0 space-y-1.5">
               {/* Compact Golden Crown Tier Chip */}
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#071544]/75 border border-amber-300/55 shadow-[0_0_12px_rgba(251,191,36,0.3)]">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#071544]/80 border border-amber-300/55">
                 <Crown className="w-3 h-3 text-amber-300 shrink-0" />
                 <span className="text-[11px] font-bold text-amber-200 tracking-wide">
                   {isAuthenticated ? `${user.level} Wallet` : 'AdView Reward Wallet'}
@@ -474,7 +496,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <div className="flex items-baseline gap-1.5 flex-wrap">
                   <AnimatedNumber
                     value={displayWallet.balancePoints}
-                    className="text-2xl sm:text-4xl font-extrabold font-display text-white leading-tight drop-shadow-[0_4px_20px_rgba(56,189,248,0.75)]"
+                    className="text-2xl sm:text-4xl font-extrabold font-display text-white leading-tight drop-shadow-[0_2px_14px_rgba(56,189,248,0.6)]"
                   />
                   <span className="text-sm sm:text-lg font-bold text-cyan-100">Points</span>
                 </div>
@@ -482,11 +504,11 @@ export const HomePage: React.FC<HomePageProps> = ({
 
               {/* Green Today Pill + Gold BDT Equivalent on one compact row */}
               <div className="flex items-center gap-2 flex-wrap tabular-nums">
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-300/55 text-[11px] sm:text-xs font-extrabold text-emerald-200 shadow-[0_0_12px_rgba(16,185,129,0.4)]">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-300/55 text-[11px] sm:text-xs font-extrabold text-emerald-200">
                   <TrendingUp className="w-3 h-3 text-emerald-300 shrink-0" />
                   +{formatPoints(displayWallet.todayEarningsPoints)} Pts Today
                 </span>
-                <span className="inline-flex items-center gap-1 text-[11px] sm:text-xs font-extrabold text-amber-300 drop-shadow-[0_0_10px_rgba(251,191,36,0.45)]">
+                <span className="inline-flex items-center gap-1 text-[11px] sm:text-xs font-extrabold text-amber-300">
                   <Sparkles className="w-3 h-3 shrink-0" />
                   {bdtEquivalent !== null
                     ? `≈ ${formatBdt(bdtEquivalent)}`
@@ -500,10 +522,14 @@ export const HomePage: React.FC<HomePageProps> = ({
               <div className="relative flex items-center justify-center">
                 <div
                   aria-hidden="true"
-                  className="absolute -inset-2 rounded-full bg-gradient-to-tr from-amber-400/40 via-cyan-400/35 to-violet-500/35 blur-lg"
+                  className="absolute -inset-4 rounded-full"
+                  style={{
+                    background:
+                      'radial-gradient(circle, rgba(251, 191, 36, 0.36) 0%, rgba(56, 189, 248, 0.2) 45%, transparent 72%)',
+                  }}
                 />
-                <Wallet3DIcon className="relative w-12 h-12 sm:w-16 sm:h-16 drop-shadow-[0_8px_18px_rgba(251,191,36,0.6)]" />
-                <CoinsStackIcon className="hidden sm:block relative -ml-3 mt-3 w-12 h-12 drop-shadow-[0_6px_14px_rgba(245,158,11,0.55)]" />
+                <Wallet3DIcon className="relative w-12 h-12 sm:w-16 sm:h-16" />
+                <CoinsStackIcon className="hidden sm:block relative -ml-3 mt-3 w-12 h-12" />
               </div>
               <button
                 type="button"
@@ -625,10 +651,10 @@ export const HomePage: React.FC<HomePageProps> = ({
         {/* 4 Multi-Color Earning Statistics Cards */}
         <section
           aria-label="Earning Statistics"
-          className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4"
+          className="perf-section grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4"
         >
           {/* 1. Today's Ad Views — Electric Blue & Cyan Glow + Progress Ring */}
-          <div className="relative overflow-hidden rounded-2xl p-4 flex flex-col items-center text-center gap-2 bg-gradient-to-b from-[#0E3184]/92 via-[#091E5A]/95 to-[#061138]/98 border border-sky-400/55 shadow-[0_14px_32px_-12px_rgba(14,165,233,0.6),inset_0_1px_0_rgba(186,230,253,0.22)]">
+          <div className="perf-card relative overflow-hidden rounded-2xl p-3.5 sm:p-4 flex flex-col items-center text-center gap-2 bg-gradient-to-b from-[#0E3184]/92 via-[#091E5A]/95 to-[#061138]/98 border border-sky-400/55 shadow-[0_10px_24px_-12px_rgba(14,165,233,0.55),inset_0_1px_0_rgba(186,230,253,0.22)]">
             <MiniCornerBars barClass="bg-gradient-to-t from-blue-600 to-cyan-300" />
             <div className="relative z-10 w-12 h-12 flex items-center justify-center">
               <svg className="w-12 h-12 -rotate-90" viewBox="0 0 44 44" aria-hidden="true">
@@ -659,7 +685,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   </linearGradient>
                 </defs>
               </svg>
-              <Eye className="w-4 h-4 text-cyan-300 absolute drop-shadow-[0_0_10px_rgba(34,211,238,0.9)]" />
+              <Eye className="w-4 h-4 text-cyan-300 absolute" />
             </div>
             <p className="relative z-10 text-xs font-semibold text-cyan-100/90">
               Today&apos;s Ad Views
@@ -667,16 +693,16 @@ export const HomePage: React.FC<HomePageProps> = ({
             <div className="relative z-10 flex items-baseline gap-1 tabular-nums">
               <AnimatedNumber
                 value={displayWallet.todayViews}
-                className="text-2xl font-extrabold font-display text-white drop-shadow-[0_0_14px_rgba(56,189,248,0.55)]"
+                className="text-xl sm:text-2xl font-extrabold font-display text-white"
               />
               <span className="text-xs font-bold text-cyan-300/90">/ {dailyCap}</span>
             </div>
           </div>
 
           {/* 2. Today's Earnings — Emerald Green Glow + Animated Gold Coin */}
-          <div className="relative overflow-hidden rounded-2xl p-4 flex flex-col items-center text-center gap-2 bg-gradient-to-b from-[#094257]/92 via-[#072B49]/95 to-[#061336]/98 border border-emerald-400/55 shadow-[0_14px_32px_-12px_rgba(16,185,129,0.6),inset_0_1px_0_rgba(167,243,208,0.22)]">
+          <div className="perf-card relative overflow-hidden rounded-2xl p-3.5 sm:p-4 flex flex-col items-center text-center gap-2 bg-gradient-to-b from-[#094257]/92 via-[#072B49]/95 to-[#061336]/98 border border-emerald-400/55 shadow-[0_10px_24px_-12px_rgba(16,185,129,0.55),inset_0_1px_0_rgba(167,243,208,0.22)]">
             <MiniCornerBars barClass="bg-gradient-to-t from-emerald-600 to-lime-300" />
-            <div className="relative z-10 w-12 h-12 rounded-full bg-gradient-to-br from-emerald-400/30 via-teal-400/25 to-amber-400/25 border border-emerald-300/60 flex items-center justify-center shadow-[0_0_22px_rgba(16,185,129,0.5)]">
+            <div className="relative z-10 w-12 h-12 rounded-full bg-gradient-to-br from-emerald-400/30 via-teal-400/25 to-amber-400/25 border border-emerald-300/60 flex items-center justify-center">
               <svg viewBox="0 0 32 32" className="w-7 h-7 coin-glow-animate" aria-hidden="true">
                 <defs>
                   <linearGradient
@@ -719,28 +745,28 @@ export const HomePage: React.FC<HomePageProps> = ({
               value={displayWallet.todayEarningsPoints}
               prefix="+"
               suffix=" Pts"
-              className="relative z-10 text-2xl font-extrabold font-display text-emerald-300 drop-shadow-[0_0_14px_rgba(52,211,153,0.6)]"
+              className="relative z-10 text-xl sm:text-2xl font-extrabold font-display text-emerald-300"
             />
           </div>
 
           {/* 3. Total Referrals — Turquoise & Teal Neon Glow */}
-          <div className="relative overflow-hidden rounded-2xl p-4 flex flex-col items-center text-center gap-2 bg-gradient-to-b from-[#0B3A69]/92 via-[#092556]/95 to-[#061138]/98 border border-teal-400/55 shadow-[0_14px_32px_-12px_rgba(20,184,166,0.6),inset_0_1px_0_rgba(153,246,228,0.22)]">
+          <div className="perf-card relative overflow-hidden rounded-2xl p-3.5 sm:p-4 flex flex-col items-center text-center gap-2 bg-gradient-to-b from-[#0B3A69]/92 via-[#092556]/95 to-[#061138]/98 border border-teal-400/55 shadow-[0_10px_24px_-12px_rgba(20,184,166,0.55),inset_0_1px_0_rgba(153,246,228,0.22)]">
             <MiniCornerBars barClass="bg-gradient-to-t from-teal-600 to-cyan-300" />
-            <div className="relative z-10 w-12 h-12 rounded-full bg-gradient-to-br from-teal-400/35 to-cyan-500/35 border border-teal-300/60 flex items-center justify-center text-teal-200 shadow-[0_0_22px_rgba(45,212,191,0.55)]">
-              <Users className="w-5 h-5 drop-shadow-[0_0_10px_rgba(45,212,191,0.9)]" />
+            <div className="relative z-10 w-12 h-12 rounded-full bg-gradient-to-br from-teal-400/35 to-cyan-500/35 border border-teal-300/60 flex items-center justify-center text-teal-200">
+              <Users className="w-5 h-5" />
             </div>
             <p className="relative z-10 text-xs font-semibold text-teal-100/90">Total Referrals</p>
             <AnimatedNumber
               value={displayWallet.totalReferrals}
-              className="relative z-10 text-2xl font-extrabold font-display text-white drop-shadow-[0_0_14px_rgba(45,212,191,0.55)]"
+              className="relative z-10 text-xl sm:text-2xl font-extrabold font-display text-white"
             />
           </div>
 
           {/* 4. Lifetime Earnings — Royal Purple + Gold Trophy Glow */}
-          <div className="relative overflow-hidden rounded-2xl p-4 flex flex-col items-center text-center gap-2 bg-gradient-to-b from-[#2A1B6E]/92 via-[#1A1657]/95 to-[#09103A]/98 border border-violet-400/55 shadow-[0_14px_32px_-12px_rgba(168,85,247,0.62),inset_0_1px_0_rgba(221,214,254,0.22)]">
+          <div className="perf-card relative overflow-hidden rounded-2xl p-3.5 sm:p-4 flex flex-col items-center text-center gap-2 bg-gradient-to-b from-[#2A1B6E]/92 via-[#1A1657]/95 to-[#09103A]/98 border border-violet-400/55 shadow-[0_10px_24px_-12px_rgba(168,85,247,0.55),inset_0_1px_0_rgba(221,214,254,0.22)]">
             <MiniCornerBars barClass="bg-gradient-to-t from-violet-600 to-amber-300" />
-            <div className="relative z-10 w-12 h-12 rounded-full bg-gradient-to-br from-amber-400/35 via-purple-500/35 to-violet-600/35 border border-amber-300/60 flex items-center justify-center text-amber-300 shadow-[0_0_22px_rgba(251,191,36,0.55)]">
-              <Trophy className="w-5 h-5 drop-shadow-[0_0_10px_rgba(251,191,36,0.9)]" />
+            <div className="relative z-10 w-12 h-12 rounded-full bg-gradient-to-br from-amber-400/35 via-purple-500/35 to-violet-600/35 border border-amber-300/60 flex items-center justify-center text-amber-300">
+              <Trophy className="w-5 h-5" />
             </div>
             <p className="relative z-10 text-xs font-semibold text-violet-100/90">
               Lifetime Earnings
@@ -748,28 +774,37 @@ export const HomePage: React.FC<HomePageProps> = ({
             <AnimatedNumber
               value={displayWallet.totalEarnedPoints}
               suffix=" Pts"
-              className="relative z-10 text-2xl font-extrabold font-display text-amber-200 drop-shadow-[0_0_14px_rgba(251,191,36,0.55)]"
+              className="relative z-10 text-xl sm:text-2xl font-extrabold font-display text-amber-200"
             />
           </div>
         </section>
 
         {/* Radiant Daily Bonus & Goal Progress Card with Golden Illuminated CTA */}
-        <div className="relative overflow-hidden rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-[#1E1B70]/95 via-[#282B8E]/95 to-[#0D4FA3]/95 border-[1.5px] border-cyan-300/60 shadow-[0_16px_42px_-10px_rgba(124,58,237,0.55),0_0_26px_-6px_rgba(56,189,248,0.5),inset_0_1px_0_rgba(255,255,255,0.28)]">
+        <div className="perf-section perf-card relative overflow-hidden rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-[#1E1B70]/95 via-[#282B8E]/95 to-[#0D4FA3]/95 border-[1.5px] border-cyan-300/60 shadow-[0_14px_34px_-10px_rgba(124,58,237,0.5),inset_0_1px_0_rgba(255,255,255,0.28)]">
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -left-10 -bottom-10 w-44 h-44 rounded-full bg-amber-400/20 blur-3xl"
+            className="pointer-events-none absolute -left-10 -bottom-10 w-44 h-44 rounded-full"
+            style={{
+              background: 'radial-gradient(circle, rgba(251, 191, 36, 0.2) 0%, transparent 70%)',
+            }}
           />
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -right-10 -top-12 w-52 h-52 rounded-full bg-cyan-300/25 blur-3xl"
+            className="pointer-events-none absolute -right-10 -top-12 w-52 h-52 rounded-full"
+            style={{
+              background: 'radial-gradient(circle, rgba(103, 232, 249, 0.22) 0%, transparent 70%)',
+            }}
           />
           <div className="relative z-10 flex items-center gap-3.5 min-w-0 flex-1">
             <div className="relative shrink-0">
               <div
                 aria-hidden="true"
-                className="absolute -inset-2 rounded-2xl bg-amber-400/45 blur-lg"
+                className="absolute -inset-3 rounded-full"
+                style={{
+                  background: 'radial-gradient(circle, rgba(251, 191, 36, 0.35) 0%, transparent 70%)',
+                }}
               />
-              <GiftBox3DIcon className="relative w-12 h-12 sm:w-14 sm:h-14 drop-shadow-[0_6px_18px_rgba(251,191,36,0.75)]" />
+              <GiftBox3DIcon className="relative w-12 h-12 sm:w-14 sm:h-14" />
             </div>
             <div className="min-w-0 flex-1 space-y-1.5">
               <div className="flex items-center gap-2 flex-wrap">
@@ -835,7 +870,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
 
         {/* Bottom Split: Available Ads + Recent Activity */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6">
+        <div className="perf-section grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6">
           {/* Colorful Available Ads */}
           <section className="lg:col-span-6 space-y-3" aria-labelledby="home-available-ads">
             <div className="flex items-center justify-between gap-2">
@@ -1053,4 +1088,4 @@ export const HomePage: React.FC<HomePageProps> = ({
       </ModalDrawer>
     </div>
   );
-};
+});

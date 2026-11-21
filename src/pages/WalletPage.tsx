@@ -152,7 +152,10 @@ export const WalletPage: React.FC<WalletPageProps> = ({
           <div className="relative shrink-0">
             <div
               aria-hidden="true"
-              className="absolute -inset-1 rounded-full bg-gradient-to-tr from-cyan-400 via-blue-500 to-amber-400 opacity-70 blur-[5px]"
+              className="absolute -inset-1.5 rounded-full"
+              style={{
+                background: 'radial-gradient(circle, rgba(56, 189, 248, 0.5) 0%, transparent 70%)',
+              }}
             />
             <UserAvatarGraphic className="relative w-12 h-12 sm:w-14 sm:h-14" />
           </div>
@@ -233,7 +236,10 @@ export const WalletPage: React.FC<WalletPageProps> = ({
           <div aria-hidden="true" className="home-light-sweep" />
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -top-14 -right-12 w-52 h-52 rounded-full bg-cyan-300/25 blur-3xl"
+            className="pointer-events-none absolute -top-14 -right-12 w-52 h-52 rounded-full"
+            style={{
+              background: 'radial-gradient(circle, rgba(103, 232, 249, 0.25) 0%, transparent 70%)',
+            }}
           />
 
           <div className="relative z-10 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
@@ -241,10 +247,13 @@ export const WalletPage: React.FC<WalletPageProps> = ({
               <div className="relative shrink-0 flex items-center">
                 <div
                   aria-hidden="true"
-                  className="absolute -inset-2 rounded-2xl bg-gradient-to-tr from-amber-400/45 via-cyan-400/35 to-blue-400/45 blur-xl"
+                  className="absolute -inset-3 rounded-full"
+                  style={{
+                    background: 'radial-gradient(circle, rgba(251, 191, 36, 0.35) 0%, transparent 72%)',
+                  }}
                 />
-                <Wallet3DIcon className="relative w-14 h-14 sm:w-16 sm:h-16 drop-shadow-[0_8px_18px_rgba(251,191,36,0.6)]" />
-                <CoinsStackIcon className="hidden sm:block relative -ml-3 mt-3 w-11 h-11 drop-shadow-[0_6px_14px_rgba(245,158,11,0.55)]" />
+                <Wallet3DIcon className="relative w-14 h-14 sm:w-16 sm:h-16" />
+                <CoinsStackIcon className="hidden sm:block relative -ml-3 mt-3 w-11 h-11" />
               </div>
 
               <div className="min-w-0 space-y-1">
@@ -388,7 +397,7 @@ export const WalletPage: React.FC<WalletPageProps> = ({
       </div>
 
       {/* 3. Four Colorful Wallet Statistics Cards */}
-      <section aria-label="Wallet Statistics" className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <section aria-label="Wallet Statistics" className="perf-section grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="rounded-2xl p-4 flex flex-col gap-2 bg-gradient-to-b from-[#094257]/92 via-[#072B49]/95 to-[#061336]/98 border border-emerald-400/55 shadow-[0_14px_30px_-12px_rgba(16,185,129,0.58)]">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 border border-emerald-200/50 flex items-center justify-center text-white shadow-[0_0_16px_rgba(16,185,129,0.55)]">
             <Trophy className="w-5 h-5" />
@@ -433,7 +442,7 @@ export const WalletPage: React.FC<WalletPageProps> = ({
       </section>
 
       {/* 4. Payment Methods & Withdrawal Policy */}
-      <section className="space-y-3" aria-labelledby="wallet-payment-methods">
+      <section className="perf-section space-y-3" aria-labelledby="wallet-payment-methods">
         <h2 id="wallet-payment-methods" className="text-base font-bold font-display text-white">
           Payment Methods
         </h2>

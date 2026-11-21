@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 
 interface AnimatedNumberProps {
   value: number;
@@ -12,20 +12,27 @@ export const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
   value,
   prefix = '',
   suffix = '',
-  durationMs = 550,
+  durationMs = 480,
   className = '',
 }) => {
-  const [displayValue, setDisplayValue] = useState(value);
+  const valueRef = useRef<HTMLSpanElement | null>(null);
   const previousRef = useRef(value);
 
   useEffect(() => {
+    const el = valueRef.current;
+    if (!el) return;
+
     const prefersReduced =
       typeof window !== 'undefined' &&
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-    if (prefersReduced || previousRef.current === value) {
+    if (
+      prefersReduced ||
+      previousRef.current === value ||
+      (typeof document !== 'undefined' && document.hidden)
+    ) {
       previousRef.current = value;
-      setDisplayValue(value);
+      el.textContent = value.toLocaleString('en-US');
       return;
     }
 
@@ -38,7 +45,8 @@ export const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
       const elapsed = now - startTime;
       const progress = Math.min(1, elapsed / durationMs);
       const eased = 1 - Math.pow(1 - progress, 3);
-      setDisplayValue(Math.round(startVal + diff * eased));
+      const nextDisplay = Math.round(startVal + diff * eased);
+      el.textContent = nextDisplay.toLocaleString('en-US');
 
       if (progress < 1) {
         frameId = requestAnimationFrame(tick);
@@ -48,13 +56,16 @@ export const AnimatedNumber: React.FC<AnimatedNumberProps> = ({
     };
 
     frameId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frameId);
+    return () => {
+      cancelAnimationFrame(frameId);
+      previousRef.current = value;
+    };
   }, [value, durationMs]);
 
   return (
     <span className={`tabular-nums ${className}`}>
       {prefix}
-      {displayValue.toLocaleString('en-US')}
+      <span ref={valueRef}>{value.toLocaleString('en-US')}</span>
       {suffix}
     </span>
   );

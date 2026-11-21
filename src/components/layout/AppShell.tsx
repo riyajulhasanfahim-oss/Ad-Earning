@@ -157,7 +157,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   };
 
   return (
-    <div className="min-h-dvh flex flex-col lg:flex-row bg-[#06091B] text-slate-100 overflow-x-hidden">
+    <div className="min-h-dvh flex flex-col lg:flex-row bg-[#06091B] text-slate-100 overflow-x-clip">
       {/* Desktop Responsive Sidebar */}
       <aside className="hidden lg:flex lg:w-[272px] lg:flex-col lg:fixed lg:inset-y-0 lg:left-0 z-30 border-r border-violet-500/15 bg-[#080D25]/95 backdrop-blur-xl">
         <div className="flex items-center gap-3 px-6 py-5 border-b border-white/10">
@@ -296,7 +296,7 @@ export const AppShell: React.FC<AppShellProps> = ({
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col lg:pl-[272px] min-w-0">
         {/* Mobile Sticky Header */}
-        <header className="lg:hidden sticky top-0 z-30 h-14 px-4 flex items-center justify-between gap-2 bg-[#070B22]/90 backdrop-blur-xl border-b border-white/10">
+        <header className="lg:hidden sticky top-0 z-30 h-14 px-4 flex items-center justify-between gap-2 bg-[#070B22]/95 backdrop-blur-md border-b border-white/10">
           {isSubPage ? (
             <button
               type="button"
@@ -459,7 +459,7 @@ export const AppShell: React.FC<AppShellProps> = ({
       {/* Mobile Fixed Bottom Navigation */}
       <nav
         aria-label="Mobile Bottom Navigation"
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-[#040B29]/98 via-[#071645]/95 to-[#091D58]/92 backdrop-blur-2xl border-t border-cyan-400/55 shadow-[0_-10px_34px_rgba(14,165,233,0.38)] pb-safe"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-30 transform-gpu bg-gradient-to-t from-[#040B29]/98 via-[#071645]/96 to-[#091D58]/95 backdrop-blur-md border-t border-cyan-400/55 shadow-[0_-8px_26px_rgba(14,165,233,0.32)] pb-safe"
       >
         <div
           aria-hidden="true"
