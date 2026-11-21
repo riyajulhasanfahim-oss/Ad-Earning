@@ -81,6 +81,7 @@ import { getDefaultSiteSettings, subscribeToSiteSettings } from './services/admi
 import { GlassCard } from './components/ui/GlassCard';
 import { useToast } from './components/ui/ToastProvider';
 import { HomePage } from './pages/HomePage';
+import { InstallAppBanner } from './components/pwa/InstallAppBanner';
 
 const AuthModal = lazy(() =>
   import('./components/auth/AuthModal').then((m) => ({ default: m.AuthModal })),
@@ -1185,6 +1186,9 @@ export default function App() {
             }}
           />
         </Suspense>
+      )}
+      {!authModalOpen && currentPage !== 'watch-ad' && (
+        <InstallAppBanner siteName={siteSettings.websiteName} />
       )}
     </>
   );
