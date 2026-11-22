@@ -1,7 +1,25 @@
 const loadedSdkZones = new Map<string, Promise<boolean>>();
 
+interface TelegramWebAppWindow extends Window {
+  Telegram?: {
+    WebApp?: {
+      initData?: string;
+    };
+  };
+}
+
 /**
- * Extracts a numeric Monetag Zone ID when the Admin configured a zone code
+ * Monetag's Rewarded Interstitial SDK (libtl.com/sdk.js) is officially built for
+ * Telegram Mini Apps (TMA). Never force-load or execute it on a regular browser website.
+ */
+export function isTelegramMiniAppContext(): boolean {
+  if (typeof window === 'undefined') return false;
+  const tg = (window as TelegramWebAppWindow).Telegram;
+  return typeof tg?.WebApp?.initData === 'string' && tg.WebApp.initData.trim().length > 0;
+}
+
+/**
+ * Extracts a numeric Monetag Zone ID when configured as a zone code
  * (e.g. "8912345", "zone:8912345", or "monetag://8912345").
  * Returns null for http(s):// external URLs.
  */
@@ -36,11 +54,15 @@ function getGlobalSdkFn(
 }
 
 /**
- * Preloads Monetag Rewarded SDK script (`https://libtl.com/sdk.js`) for a numeric Zone ID
- * so clicking "Watch Ad" can invoke the ad immediately within the user interaction.
+ * Preloads Monetag TMA Rewarded SDK ONLY inside an active Telegram Mini App context.
+ * Never loads libtl.com/sdk.js on regular websites.
  */
 export function preloadMonetagSdk(zoneId: string): Promise<boolean> {
-  if (typeof document === 'undefined' || !/^\d{4,15}$/.test(zoneId)) {
+  if (
+    typeof document === 'undefined' ||
+    !/^\d{4,15}$/.test(zoneId) ||
+    !isTelegramMiniAppContext()
+  ) {
     return Promise.resolve(false);
   }
   if (getGlobalSdkFn(zoneId)) {
@@ -104,17 +126,28 @@ export function preloadMonetagSdk(zoneId: string): Promise<boolean> {
 export interface MonetagShowOutcome {
   verified: boolean;
   zoneId: string;
+  blockedNonTelegram?: boolean;
   error?: string;
 }
 
 /**
- * Triggers the Monetag Rewarded SDK function (`show_<zoneId>`) and waits for
- * its completion Promise. Rejections or early exits yield verified=false (0 points).
+ * Triggers Monetag Rewarded Interstitial ONLY inside Telegram Mini Apps.
+ * Outside Telegram (regular website), refuses to force-run the TMA SDK and awards 0 points.
  */
 export async function showMonetagRewardedAd(
   zoneId: string,
   sessionId: string,
 ): Promise<MonetagShowOutcome> {
+  if (!isTelegramMiniAppContext()) {
+    return {
+      verified: false,
+      zoneId,
+      blockedNonTelegram: true,
+      error:
+        'Monetag Rewarded Interstitial SDK (libtl.com) is officially limited to Telegram Mini Apps and is not supported on regular websites. Use an authorized Web Rewarded Network (AppLixir, Google Ad Manager Rewarded GPT, or S2S Placement URL).',
+    };
+  }
+
   if (!/^\d{4,15}$/.test(zoneId)) {
     return { verified: false, zoneId, error: 'Invalid Monetag Zone ID configured.' };
   }
@@ -131,18 +164,25 @@ export async function showMonetagRewardedAd(
   }
 
   try {
-    let maybePromise: unknown;
+    let result: unknown;
     try {
-      maybePromise = sdkFn({ ymid: sessionId });
+      result = await sdkFn({ ymid: sessionId });
     } catch {
-      maybePromise = sdkFn();
+      result = await sdkFn();
     }
 
+    // Per Monetag TMA docs: check reward_event_type === 'valued' when returned
     if (
-      maybePromise &&
-      typeof (maybePromise as Promise<unknown>).then === 'function'
+      result &&
+      typeof result === 'object' &&
+      'reward_event_type' in result &&
+      (result as { reward_event_type?: unknown }).reward_event_type !== 'valued'
     ) {
-      await (maybePromise as Promise<unknown>);
+      return {
+        verified: false,
+        zoneId,
+        error: 'Monetag reported a non-valued event (closed early or unverified). 0 points credited.',
+      };
     }
 
     return { verified: true, zoneId };

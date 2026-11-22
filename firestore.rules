@@ -439,7 +439,7 @@ service cloud.firestore {
         ]) &&
         isValidId(data.networkId) &&
         data.networkName is string && data.networkName.size() >= 2 && data.networkName.size() <= 80 &&
-        data.logoKey in ['monetag', 'adsterra', 'custom'] &&
+        data.logoKey in ['monetag', 'applixir', 'adsterra', 'custom'] &&
         data.integrationType in ['s2s_postback', 'sdk_callback', 'direct_link', 'hybrid'] &&
         (!('publisherId' in data) || (data.publisherId is string && data.publisherId.size() <= 120)) &&
         (!('websiteId' in data) || (data.websiteId is string && data.websiteId.size() <= 120)) &&

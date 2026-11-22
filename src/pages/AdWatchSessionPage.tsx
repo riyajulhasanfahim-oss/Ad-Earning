@@ -25,8 +25,15 @@ import {
 } from '../services/dashboardService';
 import {
   extractMonetagZoneId,
+  isTelegramMiniAppContext,
   showMonetagRewardedAd,
 } from '../services/monetagSdk';
+import {
+  extractAppLixirSiteId,
+  extractGamRewardedUnitPath,
+  showAppLixirRewardedAd,
+  showGoogleRewardedAd,
+} from '../services/webRewardedSdk';
 import { GlassCard } from '../components/ui/GlassCard';
 
 interface AdWatchSessionPageProps {
@@ -54,8 +61,13 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
   const [verifyError, setVerifyError] = useState('');
   const [verifiedTxId, setVerifiedTxId] = useState('');
   const sdkVerifyRequestedRef = useRef('');
+  const sdkAutoLaunchedRef = useRef('');
 
+  const isTmaContext = useMemo(() => isTelegramMiniAppContext(), []);
   const monetagZoneId = extractMonetagZoneId(ad.placementOrUrl);
+  const gamUnitPath = extractGamRewardedUnitPath(ad.placementOrUrl);
+  const applixirSiteId = extractAppLixirSiteId(ad.placementOrUrl, ad.adNetwork);
+  const monetagBlockedOutsideTma = Boolean(monetagZoneId && !isTmaContext);
   const launchUrl = buildPlacementLaunchUrl(ad.placementOrUrl, {
     sessionId: session.sessionId,
     userId: session.userId,
@@ -80,9 +92,10 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
   const timerDone = remainingSec === 0;
 
   useEffect(() => {
+    const activeSdkRef = gamUnitPath || (isTmaContext ? monetagZoneId : null);
     if (
       !timerDone ||
-      !monetagZoneId ||
+      !activeSdkRef ||
       sdkStatus !== 'verified' ||
       ad.rewardVerificationMethod !== 'sdk_callback' ||
       ad.adType === 'direct_link' ||
@@ -96,9 +109,10 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
     void confirmSdkAdSessionReward({
       sessionId: session.sessionId,
       adId: ad.adId,
-      sdkZoneId: monetagZoneId,
+      sdkZoneId: activeSdkRef,
       watchedSeconds: elapsedSec,
       sdkVerified: true,
+      platformContext: gamUnitPath ? 'web_gpt' : 'telegram_mini_app',
     }).then((res) => {
       if (res.ok) {
         setVerifiedTxId(res.txId || session.sessionId);
@@ -109,6 +123,8 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
   }, [
     timerDone,
     monetagZoneId,
+    gamUnitPath,
+    isTmaContext,
     sdkStatus,
     ad.rewardVerificationMethod,
     ad.adType,
@@ -119,8 +135,46 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
     verifiedTxId,
   ]);
 
-  const handleLaunchMonetag = async () => {
+  const handleLaunchSdkAd = async () => {
+    if (gamUnitPath) {
+      setSdkStatus('launching');
+      setSdkError('');
+      const outcome = await showGoogleRewardedAd(gamUnitPath);
+      if (outcome.verified) {
+        setSdkStatus('verified');
+      } else {
+        setSdkStatus('failed');
+        setSdkError(outcome.error || 'Google Rewarded Ad was not completed.');
+      }
+      return;
+    }
+
+    if (applixirSiteId) {
+      setSdkStatus('launching');
+      setSdkError('');
+      const outcome = await showAppLixirRewardedAd(
+        applixirSiteId,
+        session.userId,
+        session.sessionId,
+        ad.adId,
+      );
+      if (outcome.verified) {
+        setSdkStatus('verified');
+      } else {
+        setSdkStatus('failed');
+        setSdkError(outcome.error || 'AppLixir video ad did not complete.');
+      }
+      return;
+    }
+
     if (!monetagZoneId) return;
+    if (!isTmaContext) {
+      setSdkStatus('failed');
+      setSdkError(
+        'Monetag Rewarded Interstitial SDK (libtl.com) is officially supported only inside Telegram Mini Apps and cannot be forced on a regular website.',
+      );
+      return;
+    }
     setSdkStatus('launching');
     setSdkError('');
     const outcome = await showMonetagRewardedAd(monetagZoneId, session.sessionId);
@@ -131,6 +185,15 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
       setSdkError(outcome.error || 'Ad closed early or blocked. Zero points credited.');
     }
   };
+
+  useEffect(() => {
+    if (session.status !== 'pending') return;
+    if (!applixirSiteId && !gamUnitPath && !(monetagZoneId && isTmaContext)) return;
+    if (sdkAutoLaunchedRef.current === session.sessionId) return;
+    sdkAutoLaunchedRef.current = session.sessionId;
+    void handleLaunchSdkAd();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applixirSiteId, gamUnitPath, monetagZoneId, isTmaContext, session.sessionId, session.status]);
 
   const handleBack = async () => {
     if (session.status === 'pending' && !verifiedTxId && !timerDone) {
@@ -266,18 +329,29 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
             </a>
           )}
 
-          {monetagZoneId && (
+          {(gamUnitPath || applixirSiteId || (monetagZoneId && !monetagBlockedOutsideTma)) && (
             <button
               type="button"
-              onClick={() => void handleLaunchMonetag()}
+              onClick={() => void handleLaunchSdkAd()}
               disabled={sdkStatus === 'launching'}
               className="w-full min-h-[46px] px-5 py-3 rounded-xl brand-button text-white text-sm font-bold inline-flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <Play className="w-4 h-4 fill-white" />
               <span>
-                {sdkStatus === 'launching' ? 'Showing Monetag Ad...' : 'Launch Monetag Rewarded Ad'}
+                {sdkStatus === 'launching'
+                  ? 'Showing Rewarded Ad...'
+                  : gamUnitPath
+                    ? 'Launch Google Rewarded Ad'
+                    : applixirSiteId
+                      ? 'Launch AppLixir Video Ad'
+                      : 'Launch Monetag TMA Ad'}
               </span>
             </button>
+          )}
+          {monetagBlockedOutsideTma && (
+            <p className="text-xs text-amber-300 leading-relaxed">
+              Monetag Rewarded Interstitial SDK is supported only inside Telegram Mini Apps and is disabled on standard web browsers. Switch this ad in Admin Panel to AppLixir, Google Ad Manager Rewarded GPT, or an approved S2S Placement URL.
+            </p>
           )}
         </div>
       </GlassCard>

@@ -78,7 +78,11 @@ import { InstallAppBanner } from './components/pwa/InstallAppBanner';
 import { AdWatchSessionModal } from './components/ads/AdWatchSessionModal';
 import { buildPlacementLaunchUrl, resolveAdLaunchKind } from './services/adNetworkPolicy';
 import { getDhakaDateKey } from './services/appService';
-import { extractMonetagZoneId, preloadMonetagSdk } from './services/monetagSdk';
+import {
+  extractMonetagZoneId,
+  isTelegramMiniAppContext,
+  preloadMonetagSdk,
+} from './services/monetagSdk';
 
 const AuthModal = lazy(() =>
   import('./components/auth/AuthModal').then((m) => ({ default: m.AuthModal })),
@@ -242,8 +246,9 @@ export default function App() {
   const [watchPopupBlocked, setWatchPopupBlocked] = useState(false);
   const [initiatingAdId, setInitiatingAdId] = useState<string | null>(null);
 
-  // Preload Monetag Rewarded SDK zones in background so Watch Ad triggers immediately on click
+  // Preload Monetag TMA SDK ONLY when running inside a genuine Telegram Mini App WebView
   useEffect(() => {
+    if (!isTelegramMiniAppContext()) return;
     for (const ad of activeAds) {
       if (ad.status !== 'active') continue;
       const zoneId = extractMonetagZoneId(ad.placementOrUrl);

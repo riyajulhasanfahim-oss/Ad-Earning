@@ -444,6 +444,10 @@ function runAllBackendSecurityTests(): void {
       `Frontend file must never query server-only rateLimits: ${file}`,
     );
     assert.ok(!/POSTBACK_SECRET/.test(content), `Frontend file must never reference POSTBACK_SECRET: ${file}`);
+    assert.ok(
+      !/process\.env\.APPLIXIR_|import\.meta\.env\.VITE_APPLIXIR_(SECRET|API)/i.test(content),
+      `Frontend file must never read AppLixir secret/API env variables: ${file}`,
+    );
     assert.ok(!/BEGIN PRIVATE KEY/.test(content), `Frontend file must never embed private keys: ${file}`);
   }
   results.push(`Test 18 PASSED: Secret-isolation scan passed cleanly across all ${srcFiles.length} frontend source files`);
@@ -454,16 +458,132 @@ function runAllBackendSecurityTests(): void {
   assert.match(FUNCTIONS_HELPERS, /function normalizeAdDurationSeconds/);
   assert.match(FUNCTIONS_INDEX, /normalizeAdDurationSeconds\(adData\.estimatedDuration\)/);
   assert.match(FUNCTIONS_INDEX, /S2S_POSTBACK_REQUIRED_FOR_DIRECT_LINK/);
+  assert.match(FUNCTIONS_INDEX, /MONETAG_SDK_REQUIRES_TELEGRAM_MINI_APP/);
   assert.match(FUNCTIONS_INDEX, /elapsedSinceStartSec < requiredDurationSec/);
+  const monetagSdkSrc = fs.readFileSync(path.join(ROOT, 'src', 'services', 'monetagSdk.ts'), 'utf8');
+  assert.match(monetagSdkSrc, /isTelegramMiniAppContext/);
   const adSessionsBlock = extractCollectionBlock('adSessions');
   assert.match(adSessionsBlock, /incoming\(\)\.status == 'rejected'/);
   assert.match(adSessionsBlock, /incoming\(\)\.transactionId == ''/);
-  results.push('Test 19 PASSED: 30s backend duration, 3000s guard, direct-link SDK block & owner-reject-only adSessions rules verified');
+  results.push('Test 19 PASSED: 30s backend duration, 3000s guard, TMA-only Monetag guard, direct-link SDK block & owner-reject-only adSessions rules verified');
+
+  // Test 20: AppLixir Web Rewarded Video MD5+TID S2S Verification & Zero Client Fallback
+  const verifyAppLixirMd5Local = (params: {
+    gameApiKey: string;
+    gameId: string;
+    userId: string;
+    tid: string;
+    signature: string;
+    secret: string;
+  }): boolean => {
+    const sig = params.signature.trim().toLowerCase();
+    const secretVal = params.secret.trim();
+    if (!sig || !secretVal) return false;
+    const base = `${params.gameApiKey}${params.gameId}${params.userId}`;
+    const candidates: string[] = [];
+    if (params.tid) {
+      candidates.push(crypto.createHash('md5').update(`${base}${params.tid}${secretVal}`).digest('hex'));
+    }
+    candidates.push(crypto.createHash('md5').update(`${base}${secretVal}`).digest('hex'));
+    return candidates.some((exp) => {
+      const a = Buffer.from(sig);
+      const b = Buffer.from(exp.toLowerCase());
+      return a.length === b.length && crypto.timingSafeEqual(a, b);
+    });
+  };
+
+  const appSecret = 'applixir_prod_secret_987654';
+  const appApiKey = 'game_api_key_abc123';
+  const appGameId = '8842';
+  const appUserId = 'uid_verified_001';
+  const appTid = 'tid_applixir_9911';
+  const validMd5Tid = crypto
+    .createHash('md5')
+    .update(`${appApiKey}${appGameId}${appUserId}${appTid}${appSecret}`)
+    .digest('hex');
+  const validMd5Only = crypto
+    .createHash('md5')
+    .update(`${appApiKey}${appGameId}${appUserId}${appSecret}`)
+    .digest('hex');
+
+  assert.equal(
+    verifyAppLixirMd5Local({
+      gameApiKey: appApiKey,
+      gameId: appGameId,
+      userId: appUserId,
+      tid: appTid,
+      signature: validMd5Tid,
+      secret: appSecret,
+    }),
+    true,
+    'Valid AppLixir MD5+TID signature must pass',
+  );
+  assert.equal(
+    verifyAppLixirMd5Local({
+      gameApiKey: appApiKey,
+      gameId: appGameId,
+      userId: appUserId,
+      tid: '',
+      signature: validMd5Only,
+      secret: appSecret,
+    }),
+    true,
+    'Valid AppLixir MD5-only signature must pass',
+  );
+  assert.equal(
+    verifyAppLixirMd5Local({
+      gameApiKey: appApiKey,
+      gameId: appGameId,
+      userId: appUserId,
+      tid: appTid,
+      signature: validMd5Tid,
+      secret: 'wrong_secret',
+    }),
+    false,
+    'Wrong AppLixir secret must fail',
+  );
+  assert.equal(
+    verifyAppLixirMd5Local({
+      gameApiKey: appApiKey,
+      gameId: appGameId,
+      userId: 'tampered_user',
+      tid: appTid,
+      signature: validMd5Tid,
+      secret: appSecret,
+    }),
+    false,
+    'Tampered userId must fail AppLixir MD5 verification',
+  );
+  assert.equal(
+    verifyAppLixirMd5Local({
+      gameApiKey: appApiKey,
+      gameId: appGameId,
+      userId: appUserId,
+      tid: appTid,
+      signature: validMd5Tid,
+      secret: '',
+    }),
+    false,
+    'Empty AppLixir secret must fail',
+  );
+
+  assert.match(FUNCTIONS_HELPERS, /export function verifyAppLixirMd5Signature/);
+  assert.match(FUNCTIONS_AD_NETWORK, /APPLIXIR_SECRET_KEY/);
+  assert.match(FUNCTIONS_AD_NETWORK, /APPLIXIR_API_KEY/);
+  assert.match(FUNCTIONS_AD_NETWORK, /APPLIXIR_STATUS_NOT_COMPLETED/);
+  assert.match(FUNCTIONS_AD_NETWORK, /verifyAppLixirMd5Signature/);
+  assert.match(FUNCTIONS_INDEX, /APPLIXIR_NOT_CONFIGURED/);
+  assert.match(FUNCTIONS_INDEX, /adNetworkLower\.includes\('applixir'\)/);
+  assert.match(FUNCTIONS_INDEX, /error: 'S2S_POSTBACK_REQUIRED'/);
+  const dashboardSrc = fs.readFileSync(path.join(ROOT, 'src', 'services', 'dashboardService.ts'), 'utf8');
+  assert.match(dashboardSrc, /NEVER fall back for AppLixir ads/);
+  assert.match(dashboardSrc, /AD_SESSION_ERROR_MESSAGES\.APPLIXIR_NOT_CONFIGURED/);
+  results.push('Test 20 PASSED: AppLixir MD5/TID S2S verification, backend config gates & client fallback prevention verified');
 
   for (const line of results) {
     console.log(line);
   }
-  console.log(`\nALL ${results.length}/19 BACKEND SECURITY TESTS PASSED.`);
+  console.log(`\nALL ${results.length}/20 BACKEND SECURITY TESTS PASSED.`);
 }
 
 runAllBackendSecurityTests();

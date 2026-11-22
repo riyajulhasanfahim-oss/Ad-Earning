@@ -32,6 +32,7 @@ import {
   AdPlacementRecord,
   AdSessionRecord,
   Advertisement,
+  AppLixirEnvCredentialsStatus,
 } from '../types';
 import { hasAdminPermission } from '../services/adminService';
 import {
@@ -133,6 +134,8 @@ export const AdminAdNetworksSection: React.FC<AdminAdNetworksSectionProps> = ({
   const [form, setForm] = useState<NetworkConfigForm | null>(null);
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [appLixirEnvStatus, setAppLixirEnvStatus] =
+    useState<AppLixirEnvCredentialsStatus | null>(null);
 
   // Merge Firestore networks with built-in Monetag & Adsterra blueprints if not yet initialized
   const displayNetworks = useMemo(() => {
@@ -278,6 +281,9 @@ export const AdminAdNetworksSection: React.FC<AdminAdNetworksSectionProps> = ({
         apiKeyInput: form.apiKeyInput,
         adminUser: { ...adminUser, role: adminRole },
       });
+      if (res.envCredentials) {
+        setAppLixirEnvStatus(res.envCredentials);
+      }
       showToast(
         `${form.networkName} saved (${HEALTH_BADGE[res.healthStatus].label}).`,
         'success',
@@ -336,6 +342,9 @@ export const AdminAdNetworksSection: React.FC<AdminAdNetworksSectionProps> = ({
         network: net,
         adminUser: { ...adminUser, role: adminRole },
       });
+      if (res.envCredentials) {
+        setAppLixirEnvStatus(res.envCredentials);
+      }
       showToast(
         `${net.networkName}: ${HEALTH_BADGE[res.healthStatus].label} — ${res.healthMessage}`,
         res.healthStatus === 'connected' ? 'success' : 'info',
@@ -540,19 +549,31 @@ export const AdminAdNetworksSection: React.FC<AdminAdNetworksSectionProps> = ({
 
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-[11px] bg-[#070B22] border border-white/10 rounded-xl p-3">
                       <div>
-                        <span className="text-slate-500 block">Publisher / Account ID</span>
+                        <span className="text-slate-500 block">
+                          {net.networkId === 'applixir'
+                            ? 'Publisher / Account ID'
+                            : 'Publisher / Account ID'}
+                        </span>
                         <span className="text-slate-200 font-mono-num">
-                          {net.publisherId || 'Not Set'}
+                          {net.publisherId || 'Optional'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-slate-500 block">Website / Zone ID</span>
+                        <span className="text-slate-500 block">
+                          {net.networkId === 'applixir'
+                            ? 'AppLixir Site ID / Player Key'
+                            : 'Website / Zone ID'}
+                        </span>
                         <span className="text-slate-200 font-mono-num">
                           {net.websiteId || net.placementId || 'Not Set'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-slate-500 block">Server Secret</span>
+                        <span className="text-slate-500 block">
+                          {net.networkId === 'applixir'
+                            ? 'Backend Env / Secret'
+                            : 'Server Secret'}
+                        </span>
                         <span
                           className={`font-mono-num font-semibold ${
                             net.secretConfigured ? 'text-emerald-300' : 'text-amber-300'
@@ -771,32 +792,46 @@ export const AdminAdNetworksSection: React.FC<AdminAdNetworksSectionProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-300">Publisher ID</label>
+                  <label className="font-semibold text-slate-300">
+                    {form.networkId === 'applixir' ? 'Publisher / Dev ID (Optional)' : 'Publisher ID'}
+                  </label>
                   <input
                     type="text"
                     value={form.publisherId}
                     onChange={(e) => setForm({ ...form, publisherId: e.target.value })}
-                    placeholder="Your real Publisher ID"
+                    placeholder={form.networkId === 'applixir' ? 'Optional Dev ID' : 'Your real Publisher ID'}
                     className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-300">Website / Domain ID</label>
+                  <label className="font-semibold text-slate-300">
+                    {form.networkId === 'applixir'
+                      ? 'AppLixir Site ID / Player Key'
+                      : 'Website / Domain ID'}
+                  </label>
                   <input
                     type="text"
                     value={form.websiteId}
                     onChange={(e) => setForm({ ...form, websiteId: e.target.value })}
-                    placeholder="Website ID"
+                    placeholder={
+                      form.networkId === 'applixir'
+                        ? 'e.g. 12345 or xxxx-xxxx-xxxx-xxxx'
+                        : 'Website ID'
+                    }
                     className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-300">Default Placement / Zone ID</label>
+                  <label className="font-semibold text-slate-300">
+                    {form.networkId === 'applixir'
+                      ? 'Game / Placement ID (Optional)'
+                      : 'Default Placement / Zone ID'}
+                  </label>
                   <input
                     type="text"
                     value={form.placementId}
                     onChange={(e) => setForm({ ...form, placementId: e.target.value })}
-                    placeholder="Zone / Placement ID"
+                    placeholder={form.networkId === 'applixir' ? 'AppLixir Game ID' : 'Zone / Placement ID'}
                     className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num"
                   />
                 </div>
@@ -826,25 +861,104 @@ export const AdminAdNetworksSection: React.FC<AdminAdNetworksSectionProps> = ({
               </div>
 
               <div className="space-y-1">
-                <label className="font-semibold text-slate-300">S2S Callback / Postback URL</label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="font-semibold text-slate-300">S2S Callback / Postback URL</label>
+                  <button
+                    type="button"
+                    onClick={() => void handleCopy(form.callbackUrl, 'Postback URL')}
+                    className="text-[11px] font-semibold text-cyan-300 hover:text-cyan-200 inline-flex items-center gap-1"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>Copy URL</span>
+                  </button>
+                </div>
                 <input
                   type="text"
                   value={form.callbackUrl}
                   onChange={(e) => setForm({ ...form, callbackUrl: e.target.value })}
                   className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-slate-200 font-mono-num"
                 />
+                {form.networkId === 'applixir' && (
+                  <p className="text-[11px] text-cyan-200/80 leading-relaxed pt-1">
+                    Paste this Callback URL in your AppLixir Dashboard under S2S Callback Settings
+                    (select <strong>MD5 and TID</strong> mode). AppLixir automatically appends{' '}
+                    <code>gameApiKey</code>, <code>gameId</code>, <code>userId</code>,{' '}
+                    <code>tid</code>, <code>customData</code>, and <code>signature</code>.
+                  </p>
+                )}
               </div>
+
+              {form.networkId === 'applixir' && (
+                <div className="rounded-xl bg-cyan-500/10 border border-cyan-400/25 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-cyan-200 font-bold">
+                      Backend Environment Variables Status (`functions/.env` — Never Exposed to Frontend)
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                    <div className="rounded-lg bg-[#070B22] border border-white/10 px-3 py-2">
+                      <span className="text-slate-400 block">APPLIXIR_API_KEY</span>
+                      <span
+                        className={`font-semibold ${
+                          appLixirEnvStatus?.apiKeyConfigured || form.existingSecretConfigured
+                            ? 'text-emerald-300'
+                            : 'text-amber-300'
+                        }`}
+                      >
+                        {appLixirEnvStatus
+                          ? appLixirEnvStatus.apiKeyConfigured
+                            ? 'Configured in Backend Env'
+                            : 'Not Detected in Env'
+                          : form.existingSecretConfigured
+                            ? 'Configured (Run Check Health)'
+                            : 'Set in functions/.env'}
+                      </span>
+                    </div>
+                    <div className="rounded-lg bg-[#070B22] border border-white/10 px-3 py-2">
+                      <span className="text-slate-400 block">APPLIXIR_SECRET_KEY</span>
+                      <span
+                        className={`font-semibold ${
+                          appLixirEnvStatus?.secretKeyConfigured || form.existingSecretConfigured
+                            ? 'text-emerald-300'
+                            : 'text-amber-300'
+                        }`}
+                      >
+                        {appLixirEnvStatus
+                          ? appLixirEnvStatus.secretKeyConfigured
+                            ? 'Configured in Backend Env'
+                            : 'Not Detected in Env'
+                          : form.existingSecretConfigured
+                            ? 'Configured (Run Check Health)'
+                            : 'Set in functions/.env'}
+                      </span>
+                    </div>
+                    <div className="rounded-lg bg-[#070B22] border border-white/10 px-3 py-2">
+                      <span className="text-slate-400 block">APPLIXIR_SITE_ID</span>
+                      <span className="font-semibold text-slate-200">
+                        {appLixirEnvStatus?.siteIdConfigured
+                          ? 'Configured in Backend Env'
+                          : form.websiteId
+                            ? `Using Admin Site ID (${form.websiteId})`
+                            : 'Enter Site ID above'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Private Server-Only Credentials Section */}
               <div className="rounded-xl bg-amber-500/10 border border-amber-400/25 p-3.5 space-y-3">
                 <div className="flex items-center gap-2 text-amber-200 font-bold">
                   <KeyRound className="w-4 h-4" />
-                  <span>Server-Only Credentials (`adNetworkSecrets` — Never readable by Frontend)</span>
+                  <span>
+                    Server-Only Credentials (`adNetworkSecrets` — Optional Override if not in `functions/.env`)
+                  </span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="font-semibold text-slate-300">
-                      Callback Secret {form.existingSecretConfigured ? `(${form.existingSecretHint})` : ''}
+                      {form.networkId === 'applixir' ? 'Secret Key' : 'Callback Secret'}{' '}
+                      {form.existingSecretConfigured ? `(${form.existingSecretHint})` : ''}
                     </label>
                     <input
                       type="password"
@@ -852,7 +966,11 @@ export const AdminAdNetworksSection: React.FC<AdminAdNetworksSectionProps> = ({
                       onChange={(e) =>
                         setForm({ ...form, callbackSecretInput: e.target.value })
                       }
-                      placeholder="Leave blank to keep unchanged"
+                      placeholder={
+                        form.networkId === 'applixir'
+                          ? 'Recommended: set APPLIXIR_SECRET_KEY in backend env'
+                          : 'Leave blank to keep unchanged'
+                      }
                       autoComplete="new-password"
                       className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num"
                     />
@@ -863,7 +981,11 @@ export const AdminAdNetworksSection: React.FC<AdminAdNetworksSectionProps> = ({
                       type="password"
                       value={form.apiKeyInput}
                       onChange={(e) => setForm({ ...form, apiKeyInput: e.target.value })}
-                      placeholder="Stored only in adNetworkSecrets"
+                      placeholder={
+                        form.networkId === 'applixir'
+                          ? 'Recommended: set APPLIXIR_API_KEY in backend env'
+                          : 'Stored only in adNetworkSecrets'
+                      }
                       autoComplete="new-password"
                       className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num"
                     />

@@ -16,13 +16,41 @@ const AD_NETWORK_REGISTRY: AdNetworkAdapter[] = [
     displayName: 'Monetag',
     supportedTypes: ['rewarded', 'direct_link', 'other'],
     defaultVerificationMethod: 's2s_postback',
+    supportsIncentivizedDefault: false,
+    callbackSummary:
+      'Monetag Rewarded Interstitial SDK (libtl.com) is officially restricted to Telegram Mini Apps (TMA). Standard websites require Monetag Web Direct Link/Vignette on a custom domain with explicit Incentivized S2S Postback approval.',
+    instructions: [
+      'Outside Telegram Mini Apps, Monetag TMA SDK is disabled; use an approved Web S2S placement URL.',
+      'Complete the full 30-second sponsored placement without closing early.',
+      'Points credit ONLY after Monetag sends a verified S2S postback (reward_event_type=valued) to our backend.',
+    ],
+  },
+  {
+    key: 'applixir',
+    displayName: 'AppLixir (Web Rewarded Video)',
+    supportedTypes: ['rewarded'],
+    defaultVerificationMethod: 's2s_postback',
     supportsIncentivizedDefault: true,
     callbackSummary:
-      'Supports Monetag Rewarded SDK & Server-to-Server (S2S) postback verification with unique transaction IDs.',
+      'Official regular-website fullscreen Rewarded Video SDK (applixir:<zoneId>) verified via Server-to-Server (S2S) Postback.',
     instructions: [
-      'Launch the authorized Monetag rewarded placement below.',
-      'Complete the sponsored video or interactive step without closing early.',
-      'Wait for the Monetag S2S postback to notify our backend before returning.',
+      'Watch the full AppLixir fullscreen rewarded video ad (minimum 30s session).',
+      'Do not close the video player before completion.',
+      'Points credit ONLY after AppLixir triggers the signed S2S postback to our backend.',
+    ],
+  },
+  {
+    key: 'gam_rewarded',
+    displayName: 'Google Ad Manager (Web Rewarded GPT)',
+    supportedTypes: ['rewarded'],
+    defaultVerificationMethod: 'sdk_callback',
+    supportsIncentivizedDefault: true,
+    callbackSummary:
+      'Official Google Publisher Tag (GPT) Web Rewarded Ad unit (gam:/networkCode/unitName) with fullscreen playback & rewardedSlotGranted verification.',
+    instructions: [
+      'Click to opt into the fullscreen Google Rewarded Ad experience.',
+      'Keep watching until the full 30-second session and rewardedSlotGranted event complete.',
+      'Server verification validates session duration and unique transaction ID before crediting.',
     ],
   },
   {
@@ -58,9 +86,11 @@ const AD_NETWORK_REGISTRY: AdNetworkAdapter[] = [
 export function getAdNetworkAdapter(networkName: string): AdNetworkAdapter {
   const lower = networkName.toLowerCase();
   if (lower.includes('monetag')) return AD_NETWORK_REGISTRY[0];
-  if (lower.includes('adsterra')) return AD_NETWORK_REGISTRY[1];
+  if (lower.includes('applixir')) return AD_NETWORK_REGISTRY[1];
+  if (lower.includes('google') || lower.includes('gam')) return AD_NETWORK_REGISTRY[2];
+  if (lower.includes('adsterra')) return AD_NETWORK_REGISTRY[3];
   return {
-    ...AD_NETWORK_REGISTRY[2],
+    ...AD_NETWORK_REGISTRY[4],
     displayName: networkName || 'Authorized Ad Network',
   };
 }
@@ -167,14 +197,29 @@ export function buildPlacementLaunchUrl(
   }
 }
 
-export type AdLaunchKind = 'monetag_sdk' | 'external_url' | 'unconfigured';
+export type AdLaunchKind =
+  | 'monetag_sdk'
+  | 'gam_rewarded'
+  | 'applixir_web'
+  | 'external_url'
+  | 'unconfigured';
 
 export function resolveAdLaunchKind(placementOrUrl: string): AdLaunchKind {
   const trimmed = placementOrUrl.trim();
   if (/^https?:\/\//i.test(trimmed)) {
     return 'external_url';
   }
-  if (/^(\d{4,15})$/.test(trimmed) || /^(?:monetag:\/\/|monetag:|zone:|zone_id[:=])(\d{4,15})$/i.test(trimmed)) {
+  if (/^(?:applixir:\/\/|applixir:)[a-zA-Z0-9-]{3,64}$/i.test(trimmed)) {
+    return 'applixir_web';
+  }
+  const gamStripped = trimmed.replace(/^gam:/i, '').trim();
+  if (/^\/\d{4,15}\/[a-zA-Z0-9_.\-/]{1,120}$/.test(gamStripped)) {
+    return 'gam_rewarded';
+  }
+  if (
+    /^(\d{4,15})$/.test(trimmed) ||
+    /^(?:monetag:\/\/|monetag:|zone:|zone_id[:=])(\d{4,15})$/i.test(trimmed)
+  ) {
     return 'monetag_sdk';
   }
   return 'unconfigured';

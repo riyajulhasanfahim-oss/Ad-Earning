@@ -502,7 +502,21 @@ export const AdminAdsSection: React.FC<AdminAdsSectionProps> = ({
                   <input
                     list="admin-ad-networks"
                     value={form.adNetwork}
-                    onChange={(e) => setForm({ ...form, adNetwork: e.target.value })}
+                    onChange={(e) => {
+                      const nextNet = e.target.value;
+                      const isAppLixir = nextNet.toLowerCase().includes('applixir');
+                      setForm({
+                        ...form,
+                        adNetwork: nextNet,
+                        ...(isAppLixir
+                          ? {
+                              adType: 'rewarded',
+                              rewardVerificationMethod: 's2s_postback',
+                              incentivizedTrafficAllowed: true,
+                            }
+                          : {}),
+                      });
+                    }}
                     className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white"
                   />
                   <datalist id="admin-ad-networks">
@@ -527,12 +541,20 @@ export const AdminAdsSection: React.FC<AdminAdsSectionProps> = ({
               </div>
 
               <div className="space-y-1">
-                <label className="font-semibold text-slate-300">Placement Zone ID or URL</label>
+                <label className="font-semibold text-slate-300">
+                  {form.adNetwork.toLowerCase().includes('applixir')
+                    ? 'AppLixir Site ID / Player Key (use applixir:<SiteID>)'
+                    : 'Placement Zone ID or URL'}
+                </label>
                 <input
                   type="text"
                   value={form.placementOrUrl}
                   onChange={(e) => setForm({ ...form, placementOrUrl: e.target.value })}
-                  placeholder="https://... or zone_id"
+                  placeholder={
+                    form.adNetwork.toLowerCase().includes('applixir')
+                      ? 'applixir:12345 or applixir:xxxx-xxxx-xxxx-xxxx'
+                      : 'https://... or zone_id'
+                  }
                   className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num"
                 />
               </div>

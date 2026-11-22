@@ -457,6 +457,8 @@ export const AdminApp: React.FC<AdminAppProps> = ({ onExitToUserSite }) => {
           transactions={transactions}
           withdrawals={withdrawals}
           referrals={referrals}
+          adSessions={adSessions}
+          adCompletions={adCompletions}
           economy={economy}
           adminRole={session.role}
           adminUser={adminUser}

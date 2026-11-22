@@ -558,7 +558,7 @@
       "properties": {
         "networkId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "networkName": { "type": "string", "minLength": 2, "maxLength": 80 },
-        "logoKey": { "type": "string", "enum": ["monetag", "adsterra", "custom"] },
+        "logoKey": { "type": "string", "enum": ["monetag", "applixir", "adsterra", "custom"] },
         "integrationType": { "type": "string", "enum": ["s2s_postback", "sdk_callback", "direct_link", "hybrid"] },
         "publisherId": { "type": "string", "maxLength": 120 },
         "websiteId": { "type": "string", "maxLength": 120 },

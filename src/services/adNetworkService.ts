@@ -28,6 +28,7 @@ import {
   AdNetworkLogoKey,
   AdPlacementRecord,
   AdType,
+  AppLixirEnvCredentialsStatus,
   RewardVerificationMethod,
 } from '../types';
 import { formatDhakaDateTime } from './appService';
@@ -43,12 +44,45 @@ function formatTs(ts: unknown): { label: string; millis: number } {
 }
 
 export function getCanonicalCallbackUrl(networkId: string): string {
+  const clean = networkId.trim().toLowerCase();
+  if (clean === 'applixir') {
+    return `https://us-central1-${firebaseConfig.projectId}.cloudfunctions.net/verifyAdNetworkCallback?net=applixir`;
+  }
   const cleanId = encodeURIComponent(networkId || 'monetag');
   return `https://us-central1-${firebaseConfig.projectId}.cloudfunctions.net/verifyAdNetworkCallback?net=${cleanId}&session_id={ymid}&user_id={subid}&provider_tx_id={tx_id}&ad_id={ad_id}&ts={ts}&sig={sig}`;
 }
 
 export function getDefaultNetworkTemplates(): AdNetworkConfig[] {
   return [
+    {
+      id: 'applixir',
+      networkId: 'applixir',
+      networkName: 'AppLixir',
+      logoKey: 'applixir',
+      integrationType: 's2s_postback',
+      publisherId: '',
+      websiteId: '',
+      placementId: '',
+      directLinkUrl: '',
+      apiBaseUrl: '',
+      callbackUrl: getCanonicalCallbackUrl('applixir'),
+      postbackParamsTemplate:
+        'gameApiKey={gameApiKey}&gameId={gameId}&userId={userId}&tid={tid}&customData={customData}&signature={signature}',
+      incentivizedTrafficAllowed: true,
+      rewardVerificationSupported: true,
+      rewardEnabled: false,
+      clicksSupported: false,
+      apiHealthSupported: false,
+      secretConfigured: false,
+      secretHint: '',
+      healthStatus: 'configuration_required',
+      healthMessage:
+        'Enter your AppLixir Site ID here and set APPLIXIR_API_KEY + APPLIXIR_SECRET_KEY in Backend Environment Variables before enabling rewards.',
+      enabled: false,
+      lastTestedAt: '',
+      updatedAtLabel: 'Template (Not Saved)',
+      updatedAtMillis: 0,
+    },
     {
       id: 'monetag',
       networkId: 'monetag',
@@ -119,7 +153,9 @@ export function subscribeToAdNetworks(
         const { label, millis } = formatTs(data.updatedAt);
         const logoRaw = String(data.logoKey || 'custom');
         const logoKey: AdNetworkLogoKey =
-          logoRaw === 'monetag' || logoRaw === 'adsterra' ? logoRaw : 'custom';
+          logoRaw === 'monetag' || logoRaw === 'applixir' || logoRaw === 'adsterra'
+            ? logoRaw
+            : 'custom';
         const intRaw = String(data.integrationType || 's2s_postback');
         const integrationType: AdNetworkIntegrationType =
           intRaw === 'sdk_callback' || intRaw === 'direct_link' || intRaw === 'hybrid'
@@ -543,7 +579,12 @@ export async function saveAdNetworkConfiguration(params: {
   callbackSecretInput?: string;
   apiKeyInput?: string;
   adminUser: { uid: string; email: string; role: AdminRole | null };
-}): Promise<{ usedCloudFunction: boolean; healthStatus: AdNetworkHealthStatus; healthMessage: string }> {
+}): Promise<{
+  usedCloudFunction: boolean;
+  healthStatus: AdNetworkHealthStatus;
+  healthMessage: string;
+  envCredentials?: AppLixirEnvCredentialsStatus;
+}> {
   if (
     params.rewardEnabled &&
     (!params.incentivizedTrafficAllowed || !params.rewardVerificationSupported)
@@ -569,6 +610,7 @@ export async function saveAdNetworkConfiguration(params: {
   const fnRes = await invokeAdNetworkCloudFunction<{
     healthStatus: AdNetworkHealthStatus;
     healthMessage: string;
+    envCredentials?: AppLixirEnvCredentialsStatus;
   }>('saveAdNetworkConfig', {
     networkId: cleanId,
     networkName: params.networkName.trim(),
@@ -599,6 +641,7 @@ export async function saveAdNetworkConfiguration(params: {
       usedCloudFunction: true,
       healthStatus: fnRes.data.healthStatus,
       healthMessage: fnRes.data.healthMessage,
+      envCredentials: fnRes.data.envCredentials,
     };
   }
 
@@ -680,12 +723,18 @@ export async function saveAdNetworkConfiguration(params: {
 export async function testAdNetworkHealth(params: {
   network: AdNetworkConfig;
   adminUser: { uid: string; email: string; role: AdminRole | null };
-}): Promise<{ healthStatus: AdNetworkHealthStatus; healthMessage: string; usedCloudFunction: boolean }> {
+}): Promise<{
+  healthStatus: AdNetworkHealthStatus;
+  healthMessage: string;
+  usedCloudFunction: boolean;
+  envCredentials?: AppLixirEnvCredentialsStatus;
+}> {
   const { network, adminUser } = params;
 
   const fnRes = await invokeAdNetworkCloudFunction<{
     healthStatus: AdNetworkHealthStatus;
     healthMessage: string;
+    envCredentials?: AppLixirEnvCredentialsStatus;
   }>('testAdNetworkConnection', { networkId: network.networkId });
 
   if (fnRes.reached) {
@@ -696,6 +745,7 @@ export async function testAdNetworkHealth(params: {
       healthStatus: fnRes.data.healthStatus,
       healthMessage: fnRes.data.healthMessage,
       usedCloudFunction: true,
+      envCredentials: fnRes.data.envCredentials,
     };
   }
 

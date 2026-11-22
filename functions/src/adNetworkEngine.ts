@@ -1,4 +1,14 @@
-import { db, FieldValue, getDhakaDateKey, logFailedTransaction, logFraudAttempt, sanitizeId, verifyCallbackSecretOrHmac } from './helpers';
+import {
+  db,
+  FieldValue,
+  getDhakaDateKey,
+  logFailedTransaction,
+  logFraudAttempt,
+  sanitizeId,
+  timingSafeEqualString,
+  verifyAppLixirMd5Signature,
+  verifyCallbackSecretOrHmac,
+} from './helpers';
 
 export const MAX_CALLBACK_AGE_SEC = 900; // 15 minutes
 export const MAX_FUTURE_SKEW_SEC = 60; // 1 minute clock skew tolerance
@@ -204,6 +214,15 @@ export interface NetworkCallbackExecutionContext {
   providedSignature: string;
   rawTimestamp: unknown;
   clientIp: string;
+  applixirParams?: {
+    gameApiKey: string;
+    gameId: string;
+    rawUserId: string;
+    tid: string;
+    status: string;
+    signature: string;
+    secretKeyParam: string;
+  };
   executeRewardTransaction: (params: {
     sessionId: string;
     userId: string;
@@ -223,6 +242,17 @@ export async function processVerifiedNetworkCallback(
 
   // Resolve network & secret metadata when networkId or campaignId is present
   let resolvedNetworkId = ctx.networkId ? sanitizeId(ctx.networkId) : '';
+  if (
+    !resolvedNetworkId &&
+    ctx.applixirParams &&
+    (ctx.applixirParams.gameApiKey ||
+      ctx.applixirParams.gameId ||
+      ctx.applixirParams.tid ||
+      ctx.applixirParams.signature)
+  ) {
+    resolvedNetworkId = 'applixir';
+  }
+
   let campaignData: FirebaseFirestore.DocumentData | null = null;
   let networkData: FirebaseFirestore.DocumentData | null = null;
 
@@ -237,6 +267,7 @@ export async function processVerifiedNetworkCallback(
   }
 
   let expectedNetworkSecret = '';
+  let storedNetworkApiKey = '';
   if (resolvedNetworkId) {
     const [netSnap, secSnap] = await Promise.all([
       db.collection('adNetworks').doc(resolvedNetworkId).get(),
@@ -245,50 +276,121 @@ export async function processVerifiedNetworkCallback(
     if (netSnap.exists) {
       networkData = netSnap.data()!;
     }
-    if (secSnap.exists && typeof secSnap.data()!.callbackSecret === 'string') {
-      expectedNetworkSecret = String(secSnap.data()!.callbackSecret).trim();
+    if (secSnap.exists) {
+      const secData = secSnap.data()!;
+      if (typeof secData.callbackSecret === 'string') {
+        expectedNetworkSecret = String(secData.callbackSecret).trim();
+      }
+      if (typeof secData.apiKey === 'string') {
+        storedNetworkApiKey = String(secData.apiKey).trim();
+      }
     }
   }
 
   const envFallbackSecret = (process.env.POSTBACK_SECRET || '').trim();
+  const envAppLixirSecret = (process.env.APPLIXIR_SECRET_KEY || '').trim();
+  const envAppLixirApiKey = (process.env.APPLIXIR_API_KEY || '').trim();
   const networkName = String(
     networkData?.networkName || campaignData?.networkName || resolvedNetworkId || 'Ad Network',
   );
   const clicksSupported = Boolean(networkData?.clicksSupported ?? false);
   const analyticsNetId = resolvedNetworkId || 'default_network';
 
-  // 1. Validate Signature / Secret (check per-network secret first, then global POSTBACK_SECRET)
+  // 0. AppLixir status rejection check (never reward failed/cancelled callbacks)
+  const appLixirStatusLower = (ctx.applixirParams?.status || '').trim().toLowerCase();
+  if (
+    appLixirStatusLower &&
+    ['failed', 'fail', 'cancelled', 'canceled', 'rejected', 'error', '0', 'false'].includes(
+      appLixirStatusLower,
+    )
+  ) {
+    await writeAdNetworkLog({
+      networkId: analyticsNetId,
+      eventType: 'callback_status_rejected',
+      severity: 'warning',
+      status: 'rejected',
+      details: `Rejected non-completed AppLixir callback status="${appLixirStatusLower}" for session=${ctx.sessionId}`,
+    });
+    return { httpStatus: 403, body: { ok: false, error: 'APPLIXIR_STATUS_NOT_COMPLETED' } };
+  }
+
+  // 1. Validate Signature / Secret
   const payloadToSign = `${ctx.sessionId}:${ctx.userId}:${ctx.providerTxId}`;
   const payloadWithTs =
     ctx.rawTimestamp !== undefined && ctx.rawTimestamp !== ''
       ? `${payloadToSign}:${String(ctx.rawTimestamp)}`
       : payloadToSign;
 
-  const sigMatchedNetwork = expectedNetworkSecret
-    ? verifyCallbackSecretOrHmac(
-        ctx.providedSecret,
-        ctx.providedSignature,
-        payloadWithTs,
-        expectedNetworkSecret,
-      ) ||
-      verifyCallbackSecretOrHmac(
-        ctx.providedSecret,
-        ctx.providedSignature,
-        payloadToSign,
-        expectedNetworkSecret,
-      )
-    : false;
+  let signatureValid = false;
 
-  const sigMatchedGlobal = envFallbackSecret
-    ? verifyCallbackSecretOrHmac(
-        ctx.providedSecret,
-        ctx.providedSignature,
-        payloadToSign,
-        envFallbackSecret,
-      )
-    : false;
+  if (resolvedNetworkId === 'applixir') {
+    const effectiveAppLixirSecret = envAppLixirSecret || expectedNetworkSecret;
+    const effectiveAppLixirApiKey = envAppLixirApiKey || storedNetworkApiKey;
+    const incomingApiKey = (ctx.applixirParams?.gameApiKey || '').trim();
 
-  const signatureValid = sigMatchedNetwork || sigMatchedGlobal;
+    // When backend API Key is configured and AppLixir sends gameApiKey, require timing-safe match
+    const apiKeyMatchOk =
+      !effectiveAppLixirApiKey ||
+      !incomingApiKey ||
+      timingSafeEqualString(incomingApiKey, effectiveAppLixirApiKey);
+
+    if (apiKeyMatchOk && effectiveAppLixirSecret) {
+      const md5Valid = Boolean(
+        ctx.applixirParams?.signature &&
+          verifyAppLixirMd5Signature({
+            gameApiKey: incomingApiKey,
+            gameId: ctx.applixirParams.gameId || '',
+            userId: ctx.applixirParams.rawUserId || ctx.userId || '',
+            tid: ctx.applixirParams.tid || ctx.providerTxId || '',
+            signature: ctx.applixirParams.signature,
+            secret: effectiveAppLixirSecret,
+          }),
+      );
+
+      const hmacOrSecretValid =
+        verifyCallbackSecretOrHmac(
+          ctx.providedSecret || ctx.applixirParams?.secretKeyParam || '',
+          ctx.providedSignature,
+          payloadWithTs,
+          effectiveAppLixirSecret,
+        ) ||
+        verifyCallbackSecretOrHmac(
+          ctx.providedSecret || ctx.applixirParams?.secretKeyParam || '',
+          ctx.providedSignature,
+          payloadToSign,
+          effectiveAppLixirSecret,
+        );
+
+      signatureValid = md5Valid || hmacOrSecretValid;
+    }
+  } else {
+    const sigMatchedNetwork = expectedNetworkSecret
+      ? verifyCallbackSecretOrHmac(
+          ctx.providedSecret,
+          ctx.providedSignature,
+          payloadWithTs,
+          expectedNetworkSecret,
+        ) ||
+        verifyCallbackSecretOrHmac(
+          ctx.providedSecret,
+          ctx.providedSignature,
+          payloadToSign,
+          expectedNetworkSecret,
+        )
+      : false;
+
+    const sigMatchedGlobal = envFallbackSecret
+      ? verifyCallbackSecretOrHmac(
+          ctx.providedSecret,
+          ctx.providedSignature,
+          payloadToSign,
+          envFallbackSecret,
+        )
+      : false;
+
+    signatureValid = sigMatchedNetwork || sigMatchedGlobal;
+  }
+
   if (!signatureValid) {
     const failId = sanitizeId(`cb_fail_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
     await Promise.all([

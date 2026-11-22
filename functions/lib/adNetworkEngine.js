@@ -132,6 +132,14 @@ async function processVerifiedNetworkCallback(ctx) {
     const callbackRef = helpers_1.db.collection('adCallbacks').doc(callbackId);
     // Resolve network & secret metadata when networkId or campaignId is present
     let resolvedNetworkId = ctx.networkId ? (0, helpers_1.sanitizeId)(ctx.networkId) : '';
+    if (!resolvedNetworkId &&
+        ctx.applixirParams &&
+        (ctx.applixirParams.gameApiKey ||
+            ctx.applixirParams.gameId ||
+            ctx.applixirParams.tid ||
+            ctx.applixirParams.signature)) {
+        resolvedNetworkId = 'applixir';
+    }
     let campaignData = null;
     let networkData = null;
     if (ctx.campaignId) {
@@ -144,6 +152,7 @@ async function processVerifiedNetworkCallback(ctx) {
         }
     }
     let expectedNetworkSecret = '';
+    let storedNetworkApiKey = '';
     if (resolvedNetworkId) {
         const [netSnap, secSnap] = await Promise.all([
             helpers_1.db.collection('adNetworks').doc(resolvedNetworkId).get(),
@@ -152,27 +161,74 @@ async function processVerifiedNetworkCallback(ctx) {
         if (netSnap.exists) {
             networkData = netSnap.data();
         }
-        if (secSnap.exists && typeof secSnap.data().callbackSecret === 'string') {
-            expectedNetworkSecret = String(secSnap.data().callbackSecret).trim();
+        if (secSnap.exists) {
+            const secData = secSnap.data();
+            if (typeof secData.callbackSecret === 'string') {
+                expectedNetworkSecret = String(secData.callbackSecret).trim();
+            }
+            if (typeof secData.apiKey === 'string') {
+                storedNetworkApiKey = String(secData.apiKey).trim();
+            }
         }
     }
     const envFallbackSecret = (process.env.POSTBACK_SECRET || '').trim();
+    const envAppLixirSecret = (process.env.APPLIXIR_SECRET_KEY || '').trim();
+    const envAppLixirApiKey = (process.env.APPLIXIR_API_KEY || '').trim();
     const networkName = String(networkData?.networkName || campaignData?.networkName || resolvedNetworkId || 'Ad Network');
     const clicksSupported = Boolean(networkData?.clicksSupported ?? false);
     const analyticsNetId = resolvedNetworkId || 'default_network';
-    // 1. Validate Signature / Secret (check per-network secret first, then global POSTBACK_SECRET)
+    // 0. AppLixir status rejection check (never reward failed/cancelled callbacks)
+    const appLixirStatusLower = (ctx.applixirParams?.status || '').trim().toLowerCase();
+    if (appLixirStatusLower &&
+        ['failed', 'fail', 'cancelled', 'canceled', 'rejected', 'error', '0', 'false'].includes(appLixirStatusLower)) {
+        await writeAdNetworkLog({
+            networkId: analyticsNetId,
+            eventType: 'callback_status_rejected',
+            severity: 'warning',
+            status: 'rejected',
+            details: `Rejected non-completed AppLixir callback status="${appLixirStatusLower}" for session=${ctx.sessionId}`,
+        });
+        return { httpStatus: 403, body: { ok: false, error: 'APPLIXIR_STATUS_NOT_COMPLETED' } };
+    }
+    // 1. Validate Signature / Secret
     const payloadToSign = `${ctx.sessionId}:${ctx.userId}:${ctx.providerTxId}`;
     const payloadWithTs = ctx.rawTimestamp !== undefined && ctx.rawTimestamp !== ''
         ? `${payloadToSign}:${String(ctx.rawTimestamp)}`
         : payloadToSign;
-    const sigMatchedNetwork = expectedNetworkSecret
-        ? (0, helpers_1.verifyCallbackSecretOrHmac)(ctx.providedSecret, ctx.providedSignature, payloadWithTs, expectedNetworkSecret) ||
-            (0, helpers_1.verifyCallbackSecretOrHmac)(ctx.providedSecret, ctx.providedSignature, payloadToSign, expectedNetworkSecret)
-        : false;
-    const sigMatchedGlobal = envFallbackSecret
-        ? (0, helpers_1.verifyCallbackSecretOrHmac)(ctx.providedSecret, ctx.providedSignature, payloadToSign, envFallbackSecret)
-        : false;
-    const signatureValid = sigMatchedNetwork || sigMatchedGlobal;
+    let signatureValid = false;
+    if (resolvedNetworkId === 'applixir') {
+        const effectiveAppLixirSecret = envAppLixirSecret || expectedNetworkSecret;
+        const effectiveAppLixirApiKey = envAppLixirApiKey || storedNetworkApiKey;
+        const incomingApiKey = (ctx.applixirParams?.gameApiKey || '').trim();
+        // When backend API Key is configured and AppLixir sends gameApiKey, require timing-safe match
+        const apiKeyMatchOk = !effectiveAppLixirApiKey ||
+            !incomingApiKey ||
+            (0, helpers_1.timingSafeEqualString)(incomingApiKey, effectiveAppLixirApiKey);
+        if (apiKeyMatchOk && effectiveAppLixirSecret) {
+            const md5Valid = Boolean(ctx.applixirParams?.signature &&
+                (0, helpers_1.verifyAppLixirMd5Signature)({
+                    gameApiKey: incomingApiKey,
+                    gameId: ctx.applixirParams.gameId || '',
+                    userId: ctx.applixirParams.rawUserId || ctx.userId || '',
+                    tid: ctx.applixirParams.tid || ctx.providerTxId || '',
+                    signature: ctx.applixirParams.signature,
+                    secret: effectiveAppLixirSecret,
+                }));
+            const hmacOrSecretValid = (0, helpers_1.verifyCallbackSecretOrHmac)(ctx.providedSecret || ctx.applixirParams?.secretKeyParam || '', ctx.providedSignature, payloadWithTs, effectiveAppLixirSecret) ||
+                (0, helpers_1.verifyCallbackSecretOrHmac)(ctx.providedSecret || ctx.applixirParams?.secretKeyParam || '', ctx.providedSignature, payloadToSign, effectiveAppLixirSecret);
+            signatureValid = md5Valid || hmacOrSecretValid;
+        }
+    }
+    else {
+        const sigMatchedNetwork = expectedNetworkSecret
+            ? (0, helpers_1.verifyCallbackSecretOrHmac)(ctx.providedSecret, ctx.providedSignature, payloadWithTs, expectedNetworkSecret) ||
+                (0, helpers_1.verifyCallbackSecretOrHmac)(ctx.providedSecret, ctx.providedSignature, payloadToSign, expectedNetworkSecret)
+            : false;
+        const sigMatchedGlobal = envFallbackSecret
+            ? (0, helpers_1.verifyCallbackSecretOrHmac)(ctx.providedSecret, ctx.providedSignature, payloadToSign, envFallbackSecret)
+            : false;
+        signatureValid = sigMatchedNetwork || sigMatchedGlobal;
+    }
     if (!signatureValid) {
         const failId = (0, helpers_1.sanitizeId)(`cb_fail_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
         await Promise.all([

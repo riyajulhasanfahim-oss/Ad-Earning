@@ -608,6 +608,13 @@ const AD_SESSION_ERROR_MESSAGES: Record<string, string> = {
     'Direct Link ads cannot be credited without verified Ad Network S2S postback.',
   S2S_POSTBACK_REQUIRED:
     'This ad requires verified Ad Network S2S postback confirmation.',
+  MONETAG_SDK_REQUIRES_TELEGRAM_MINI_APP:
+    'Monetag Rewarded Interstitial SDK is only supported inside Telegram Mini Apps and cannot be used on regular websites.',
+  APPLIXIR_NOT_CONFIGURED:
+    'AppLixir is not configured yet. Set a valid Site ID in Admin Panel and APPLIXIR_API_KEY + APPLIXIR_SECRET_KEY in Backend Environment Variables before watching AppLixir ads. 0 points credited.',
+  NETWORK_DISABLED: 'This ad network is currently disabled by Administrator.',
+  NETWORK_REWARD_NOT_ELIGIBLE:
+    'Rewards are not enabled for this ad network in Admin Panel.',
   SDK_ZONE_MISMATCH: 'Ad zone mismatch detected. Reward rejected.',
   SESSION_ALREADY_FINALIZED: 'This ad session has already been finalized.',
 };
@@ -716,6 +723,23 @@ export async function initiateAdSession(
       }
     } catch (err) {
       // Only fall back to Firestore rules-validated session creation if Cloud Function is unreachable (404 / network error)
+      // NEVER fall back for AppLixir ads because AppLixir requires backend credentials & S2S postback verification.
+      const isAppLixir =
+        ad.adNetwork.toLowerCase().includes('applixir') ||
+        /^applixir:/i.test(ad.placementOrUrl.trim());
+      if (isAppLixir) {
+        if (
+          err instanceof Error &&
+          (err.message.includes('Failed to fetch') ||
+            err.message.includes('NetworkError') ||
+            err.message.includes('fetch'))
+        ) {
+          throw new Error(
+            'AppLixir Rewarded Ads require the deployed Firebase Cloud Functions backend (`createAdSession` & `verifyAdNetworkCallback`). 0 points credited.',
+          );
+        }
+        throw err;
+      }
       if (
         err instanceof Error &&
         !err.message.includes('Failed to fetch') &&
@@ -725,6 +749,13 @@ export async function initiateAdSession(
         throw err;
       }
     }
+  }
+
+  if (
+    ad.adNetwork.toLowerCase().includes('applixir') ||
+    /^applixir:/i.test(ad.placementOrUrl.trim())
+  ) {
+    throw new Error(AD_SESSION_ERROR_MESSAGES.APPLIXIR_NOT_CONFIGURED);
   }
 
   const randomSuffix =
@@ -775,6 +806,7 @@ export async function confirmSdkAdSessionReward(params: {
   sdkZoneId: string;
   watchedSeconds: number;
   sdkVerified: boolean;
+  platformContext?: 'telegram_mini_app' | 'web_gpt';
 }): Promise<{ ok: boolean; rewardPoints?: number; txId?: string; error?: string }> {
   const currentUser = auth.currentUser;
   if (!currentUser) {

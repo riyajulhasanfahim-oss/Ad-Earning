@@ -43,7 +43,11 @@ exports.validateMethodAccount = validateMethodAccount;
 exports.sanitizeId = sanitizeId;
 exports.calcBdtSnapshot = calcBdtSnapshot;
 exports.maskPublicUsername = maskPublicUsername;
+exports.timingSafeEqualString = timingSafeEqualString;
 exports.verifyCallbackSecretOrHmac = verifyCallbackSecretOrHmac;
+exports.verifyAppLixirMd5Signature = verifyAppLixirMd5Signature;
+exports.isValidAppLixirSiteOrKey = isValidAppLixirSiteOrKey;
+exports.getAppLixirBackendEnvStatus = getAppLixirBackendEnvStatus;
 exports.verifyAppCheckIfEnforced = verifyAppCheckIfEnforced;
 exports.verifyAuthAndRole = verifyAuthAndRole;
 exports.readActiveAppSettings = readActiveAppSettings;
@@ -146,29 +150,66 @@ function maskPublicUsername(username) {
         return `${clean.slice(0, 2)}***${clean.slice(-1)}`;
     return `${clean.slice(0, 3)}***${clean.slice(-2)}`;
 }
+function timingSafeEqualString(aStr, bStr) {
+    if (!aStr || !bStr)
+        return false;
+    const a = Buffer.from(aStr);
+    const b = Buffer.from(bStr);
+    if (a.length !== b.length)
+        return false;
+    return crypto.timingSafeEqual(a, b);
+}
 function verifyCallbackSecretOrHmac(providedSecret, providedSignature, payloadString, expectedSecret) {
     if (!expectedSecret) {
         return false;
     }
-    if (providedSecret) {
-        const a = Buffer.from(providedSecret);
-        const b = Buffer.from(expectedSecret);
-        if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
-            return true;
-        }
+    if (providedSecret && timingSafeEqualString(providedSecret, expectedSecret)) {
+        return true;
     }
     if (providedSignature) {
         const expectedHmac = crypto
             .createHmac('sha256', expectedSecret)
             .update(payloadString)
             .digest('hex');
-        const a = Buffer.from(providedSignature.toLowerCase());
-        const b = Buffer.from(expectedHmac.toLowerCase());
-        if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+        if (timingSafeEqualString(providedSignature.toLowerCase(), expectedHmac.toLowerCase())) {
             return true;
         }
     }
     return false;
+}
+/**
+ * Verifies AppLixir's official S2S Web Callback MD5 signature:
+ * - MD5 + TID mode: md5(gameApiKey + gameId + userId + tid + secret)
+ * - MD5 Only mode:  md5(gameApiKey + gameId + userId + secret)
+ */
+function verifyAppLixirMd5Signature(params) {
+    const sig = params.signature.trim().toLowerCase();
+    const secret = params.secret.trim();
+    if (!sig || !secret)
+        return false;
+    const base = `${params.gameApiKey}${params.gameId}${params.userId}`;
+    const candidates = [];
+    if (params.tid) {
+        candidates.push(crypto.createHash('md5').update(`${base}${params.tid}${secret}`).digest('hex'));
+    }
+    candidates.push(crypto.createHash('md5').update(`${base}${secret}`).digest('hex'));
+    return candidates.some((expected) => timingSafeEqualString(sig, expected.toLowerCase()));
+}
+function isValidAppLixirSiteOrKey(rawValue) {
+    const clean = rawValue.replace(/^applixir:\/\//i, '').replace(/^applixir:/i, '').trim();
+    if (!clean || /^(demo|test|placeholder|0+|none|null|undefined)$/i.test(clean)) {
+        return false;
+    }
+    const isNumericSiteId = /^\d{3,12}$/.test(clean);
+    const isUuidOrKey = /^[a-zA-Z0-9-]{8,64}$/.test(clean);
+    return isNumericSiteId || isUuidOrKey;
+}
+function getAppLixirBackendEnvStatus() {
+    return {
+        siteIdConfigured: isValidAppLixirSiteOrKey((process.env.APPLIXIR_SITE_ID || '').trim()),
+        apiKeyConfigured: Boolean((process.env.APPLIXIR_API_KEY || '').trim()),
+        secretKeyConfigured: Boolean((process.env.APPLIXIR_SECRET_KEY || '').trim()),
+    };
 }
 async function verifyAppCheckIfEnforced(req) {
     const enforced = process.env.ENFORCE_APP_CHECK === 'true';

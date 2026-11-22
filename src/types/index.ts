@@ -516,7 +516,13 @@ export interface RegisterPayload {
   referralCode?: string;
 }
 
-export type AdNetworkLogoKey = 'monetag' | 'adsterra' | 'custom';
+export type AdNetworkLogoKey = 'monetag' | 'applixir' | 'adsterra' | 'custom';
+
+export interface AppLixirEnvCredentialsStatus {
+  siteIdConfigured: boolean;
+  apiKeyConfigured: boolean;
+  secretKeyConfigured: boolean;
+}
 
 export type AdNetworkIntegrationType =
   | 's2s_postback'

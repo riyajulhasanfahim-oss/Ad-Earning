@@ -26,8 +26,15 @@ import {
 } from '../../services/dashboardService';
 import {
   extractMonetagZoneId,
+  isTelegramMiniAppContext,
   showMonetagRewardedAd,
 } from '../../services/monetagSdk';
+import {
+  extractAppLixirSiteId,
+  extractGamRewardedUnitPath,
+  showAppLixirRewardedAd,
+  showGoogleRewardedAd,
+} from '../../services/webRewardedSdk';
 
 interface AdWatchSessionModalProps {
   ad: Advertisement;
@@ -67,10 +74,20 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
   const sdkVerifyRequestedRef = useRef<string>('');
   const successToastedRef = useRef<string>('');
 
+  const isTmaContext = useMemo(() => isTelegramMiniAppContext(), []);
   const monetagZoneId = useMemo(
     () => extractMonetagZoneId(ad.placementOrUrl),
     [ad.placementOrUrl],
   );
+  const gamUnitPath = useMemo(
+    () => extractGamRewardedUnitPath(ad.placementOrUrl),
+    [ad.placementOrUrl],
+  );
+  const applixirSiteId = useMemo(
+    () => extractAppLixirSiteId(ad.placementOrUrl, ad.adNetwork),
+    [ad.placementOrUrl, ad.adNetwork],
+  );
+  const monetagBlockedOutsideTma = Boolean(monetagZoneId && !isTmaContext);
   const launchUrl = useMemo(
     () =>
       buildPlacementLaunchUrl(ad.placementOrUrl, {
@@ -107,8 +124,47 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
   const timerDone = remainingSec === 0;
   const progressPct = Math.min(100, Math.round((elapsedSec / requiredDuration) * 100));
 
-  const launchMonetagZone = async () => {
+  const launchSdkOrWebAd = async () => {
+    if (gamUnitPath) {
+      setSdkStatus('launching');
+      setSdkError('');
+      const outcome = await showGoogleRewardedAd(gamUnitPath);
+      if (outcome.verified) {
+        setSdkStatus('verified');
+      } else {
+        setSdkStatus('failed');
+        setSdkError(outcome.error || 'Google Rewarded Ad was not completed. 0 points credited.');
+      }
+      return;
+    }
+
+    if (applixirSiteId) {
+      setSdkStatus('launching');
+      setSdkError('');
+      const outcome = await showAppLixirRewardedAd(
+        applixirSiteId,
+        session.userId,
+        session.sessionId,
+        ad.adId,
+      );
+      if (outcome.verified) {
+        setSdkStatus('verified');
+      } else {
+        setSdkStatus('failed');
+        setSdkError(outcome.error || 'AppLixir video ad did not complete. 0 points credited.');
+      }
+      return;
+    }
+
     if (!monetagZoneId) return;
+    if (!isTmaContext) {
+      setSdkStatus('failed');
+      setSdkError(
+        'Monetag Rewarded Interstitial SDK (libtl.com) is officially limited to Telegram Mini Apps and cannot be forced on a regular browser website. Switch this placement in Admin Panel to an authorized Web Rewarded Network (AppLixir Web Video + S2S Postback, Google Ad Manager Rewarded GPT, or an approved S2S Placement URL).',
+      );
+      return;
+    }
+
     setSdkStatus('launching');
     setSdkError('');
     const outcome = await showMonetagRewardedAd(monetagZoneId, session.sessionId);
@@ -122,20 +178,21 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
     }
   };
 
-  // Auto-launch Monetag SDK immediately when a numeric Zone ID is configured
+  // Auto-launch authorized Rewarded SDK immediately (never forces TMA SDK on regular websites)
   useEffect(() => {
-    if (!monetagZoneId) return;
+    if (!monetagZoneId && !gamUnitPath && !applixirSiteId) return;
     if (sdkLaunchedForSessionRef.current === session.sessionId) return;
     sdkLaunchedForSessionRef.current = session.sessionId;
-    void launchMonetagZone();
+    void launchSdkOrWebAd();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monetagZoneId, session.sessionId]);
+  }, [monetagZoneId, gamUnitPath, applixirSiteId, session.sessionId]);
 
-  // Trigger backend SDK completion check ONLY after BOTH 30s elapsed AND Monetag SDK confirmed
+  // Trigger backend SDK completion check ONLY for authorized sdk_callback ads (GAM Web GPT or Monetag inside TMA) after BOTH 30s elapsed AND SDK confirmed
   useEffect(() => {
+    const activeSdkRef = gamUnitPath || (isTmaContext ? monetagZoneId : null);
     if (
       !timerDone ||
-      !monetagZoneId ||
+      !activeSdkRef ||
       sdkStatus !== 'verified' ||
       ad.rewardVerificationMethod !== 'sdk_callback' ||
       ad.adType === 'direct_link' ||
@@ -155,9 +212,10 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
     void confirmSdkAdSessionReward({
       sessionId: session.sessionId,
       adId: ad.adId,
-      sdkZoneId: monetagZoneId,
+      sdkZoneId: activeSdkRef,
       watchedSeconds: elapsedSec,
       sdkVerified: true,
+      platformContext: gamUnitPath ? 'web_gpt' : 'telegram_mini_app',
     }).then((res) => {
       setVerifyingServer(false);
       if (res.ok) {
@@ -171,6 +229,8 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
   }, [
     timerDone,
     monetagZoneId,
+    gamUnitPath,
+    isTmaContext,
     sdkStatus,
     ad.rewardVerificationMethod,
     ad.adType,
@@ -383,16 +443,19 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
                 </p>
               </div>
             </div>
-          ) : verifyingServer ? (
+          ) : verifyingServer || (Boolean(applixirSiteId) && sdkStatus === 'verified') ? (
             <div className="p-4 rounded-2xl bg-cyan-500/15 border border-cyan-400/35 flex items-start gap-3">
               <Loader2 className="w-6 h-6 text-cyan-300 animate-spin shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <p className="text-sm font-bold text-white">
-                  Verifying Completion with Backend...
+                  {applixirSiteId
+                    ? 'AppLixir Video Completed — Waiting for S2S Postback'
+                    : 'Verifying Completion with Backend...'}
                 </p>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  Confirming 30-second duration, single-use session ID, daily limit, and{' '}
-                  {ad.adNetwork} SDK verification.
+                  {applixirSiteId
+                    ? 'Your video finished. Points will credit automatically as soon as AppLixir sends and our server verifies the official S2S Postback (minimum 30s session + MD5 signature check).'
+                    : `Confirming 30-second duration, single-use session ID, daily limit, and ${ad.adNetwork} SDK verification.`}
                 </p>
               </div>
             </div>
@@ -405,7 +468,7 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
                     ? `Keep Watching (${remainingSec}s left before verification)`
                     : ad.rewardVerificationMethod === 's2s_postback'
                       ? `30s Complete — Waiting for ${ad.adNetwork} S2S Postback`
-                      : 'Waiting for Monetag Rewarded SDK Confirmation'}
+                      : 'Waiting for Rewarded SDK Confirmation'}
                 </p>
                 <p className="text-xs text-slate-300 leading-relaxed">
                   {ad.adType === 'direct_link'
@@ -447,24 +510,33 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
                 </div>
               )}
 
-              {monetagZoneId && (
+              {(monetagZoneId || gamUnitPath || applixirSiteId) && (
                 <div className="flex items-center justify-between gap-2 pt-1">
                   <span className="text-[11px] text-slate-300">
-                    Monetag Zone <span className="font-mono-num text-white">{monetagZoneId}</span>:{' '}
+                    {gamUnitPath
+                      ? `Google Rewarded Unit ${gamUnitPath}`
+                      : applixirSiteId
+                        ? `AppLixir Web Zone ${applixirSiteId}`
+                        : `Monetag TMA Zone ${monetagZoneId}`}
+                    :{' '}
                     <span className="font-semibold text-cyan-300">
-                      {sdkStatus === 'launching'
-                        ? 'Showing Ad...'
-                        : sdkStatus === 'verified'
-                          ? 'SDK Verified'
-                          : sdkStatus === 'failed'
-                            ? 'Not Completed'
-                            : 'Ready'}
+                      {monetagBlockedOutsideTma
+                        ? 'Blocked (Telegram Mini App Only)'
+                        : sdkStatus === 'launching'
+                          ? 'Showing Ad...'
+                          : sdkStatus === 'verified'
+                            ? applixirSiteId
+                              ? 'Video Watched (Awaiting S2S Postback)'
+                              : 'Completed (Pending Server Check)'
+                            : sdkStatus === 'failed'
+                              ? 'Not Completed'
+                              : 'Ready'}
                     </span>
                   </span>
-                  {sdkStatus === 'failed' && (
+                  {sdkStatus === 'failed' && !monetagBlockedOutsideTma && (
                     <button
                       type="button"
-                      onClick={() => void launchMonetagZone()}
+                      onClick={() => void launchSdkOrWebAd()}
                       className="min-h-[34px] px-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold inline-flex items-center gap-1.5"
                     >
                       <Play className="w-3.5 h-3.5 fill-white" />
@@ -474,9 +546,9 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
                 </div>
               )}
 
-              {!launchUrl && !monetagZoneId && (
+              {!launchUrl && !monetagZoneId && !gamUnitPath && !applixirSiteId && (
                 <p className="text-xs text-amber-300">
-                  This ad placement is missing a valid HTTPS URL or Monetag Zone ID in Admin Panel.
+                  This ad placement is missing a valid HTTPS URL, AppLixir ID, or Google Rewarded Unit in Admin Panel.
                 </p>
               )}
             </div>

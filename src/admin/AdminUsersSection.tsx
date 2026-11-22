@@ -13,7 +13,9 @@ import {
 } from 'lucide-react';
 import {
   AccountStatus,
+  AdCompletionRecord,
   AdminRole,
+  AdSessionRecord,
   EconomyConfig,
   ReferredUser,
   TransactionRecord,
@@ -36,6 +38,8 @@ interface AdminUsersSectionProps {
   transactions: TransactionRecord[];
   withdrawals: WithdrawalRequestRecord[];
   referrals: ReferredUser[];
+  adSessions?: AdSessionRecord[];
+  adCompletions?: AdCompletionRecord[];
   economy: EconomyConfig;
   adminRole: AdminRole;
   adminUser: { uid: string; email: string };
@@ -51,6 +55,8 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
   transactions,
   withdrawals,
   referrals,
+  adSessions = [],
+  adCompletions = [],
   economy,
   adminRole,
   adminUser,
@@ -62,7 +68,9 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
   const [page, setPage] = useState(1);
 
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
-  const [detailTab, setDetailTab] = useState<'overview' | 'earnings' | 'withdrawals' | 'referrals'>('overview');
+  const [detailTab, setDetailTab] = useState<
+    'overview' | 'earnings' | 'ad_history' | 'withdrawals' | 'referrals'
+  >('overview');
 
   const [statusModal, setStatusModal] = useState<{
     user: UserProfile;
@@ -161,6 +169,37 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
     () => (selectedUser ? referrals.filter((r) => r.referrerUid === selectedUser.uid) : []),
     [selectedUser, referrals],
   );
+  const selectedUserAdHistory = useMemo(() => {
+    if (!selectedUser) return [];
+    const sessions = adSessions.filter((s) => s.userId === selectedUser.uid);
+    const completions = adCompletions.filter((c) => c.userId === selectedUser.uid);
+    const merged = [
+      ...completions.map((c) => ({
+        id: `comp_${c.id}`,
+        adName: c.adName,
+        adNetwork: c.adNetwork,
+        status: c.status,
+        points: c.rewardPoints,
+        txId: c.transactionId || c.sessionId,
+        dateLabel: c.createdAtLabel || c.dhakaDate,
+        millis: c.createdAtMillis,
+      })),
+      ...sessions
+        .filter((s) => s.status !== 'completed')
+        .map((s) => ({
+          id: `sess_${s.id}`,
+          adName: s.adName,
+          adNetwork: s.adNetwork,
+          status: s.status,
+          points: 0,
+          txId: s.sessionId,
+          dateLabel: s.createdAtLabel || s.dhakaDate,
+          millis: s.createdAtMillis,
+        })),
+    ];
+    merged.sort((a, b) => b.millis - a.millis);
+    return merged;
+  }, [selectedUser, adSessions, adCompletions]);
 
   return (
     <div className="space-y-4">
@@ -422,6 +461,7 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
                 [
                   { id: 'overview', label: 'Overview & Wallet' },
                   { id: 'earnings', label: `Earning History (${selectedUserTx.length})` },
+                  { id: 'ad_history', label: `Ad History (${selectedUserAdHistory.length})` },
                   { id: 'withdrawals', label: `Withdrawals (${selectedUserWd.length})` },
                   { id: 'referrals', label: `Referrals (${selectedUserRefs.length})` },
                 ] as const
@@ -500,6 +540,42 @@ export const AdminUsersSection: React.FC<AdminUsersSectionProps> = ({
                           {t.pointsDelta >= 0 ? '+' : ''}
                           {formatPoints(t.pointsDelta)} Pts
                         </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {detailTab === 'ad_history' && (
+                <div className="divide-y divide-white/10 border border-white/10 rounded-xl overflow-hidden">
+                  {selectedUserAdHistory.length === 0 ? (
+                    <p className="p-6 text-center text-slate-400">No ad views or sessions recorded.</p>
+                  ) : (
+                    selectedUserAdHistory.slice(0, 50).map((item) => (
+                      <div key={item.id} className="p-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-white truncate">
+                            {item.adName} · {item.adNetwork}
+                          </p>
+                          <p className="text-[11px] font-mono-num text-slate-400 truncate">
+                            {item.txId} · {item.dateLabel}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span
+                            className={`font-mono-num font-bold ${
+                              item.status === 'completed'
+                                ? 'text-emerald-300'
+                                : item.status === 'rejected'
+                                  ? 'text-rose-300'
+                                  : 'text-amber-300'
+                            }`}
+                          >
+                            {item.status === 'completed'
+                              ? `+${formatPoints(item.points)} Pts`
+                              : item.status}
+                          </span>
+                        </div>
                       </div>
                     ))
                   )}

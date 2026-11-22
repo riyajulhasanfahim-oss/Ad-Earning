@@ -14,8 +14,10 @@ import {
   db,
   extractRequestMetadata,
   FieldValue,
+  getAppLixirBackendEnvStatus,
   getDhakaDateKey,
   getDhakaMonthKey,
+  isValidAppLixirSiteOrKey,
   logFailedTransaction,
   logSystemError,
   maskAccountNumber,
@@ -722,6 +724,55 @@ export const createAdSession = onRequest({ cors: true }, async (req, res) => {
       return;
     }
 
+    const adNetLower = String(adData.adNetwork || '').toLowerCase();
+    const placementStr = String(adData.placementOrUrl || '').trim();
+    const isAppLixirAd = adNetLower.includes('applixir') || /^applixir:/i.test(placementStr);
+
+    if (isAppLixirAd) {
+      if (adData.rewardVerificationMethod !== 's2s_postback') {
+        res.status(403).json({ ok: false, error: 'S2S_POSTBACK_REQUIRED' });
+        return;
+      }
+      const [appNetSnap, appSecSnap] = await Promise.all([
+        db.collection('adNetworks').doc('applixir').get(),
+        db.collection('adNetworkSecrets').doc('applixir').get(),
+      ]);
+      const appNet = appNetSnap.exists ? appNetSnap.data()! : null;
+      const appSec = appSecSnap.exists ? appSecSnap.data()! : {};
+      if (appNet && appNet.enabled === false) {
+        res.status(403).json({ ok: false, error: 'NETWORK_DISABLED' });
+        return;
+      }
+      if (appNet && appNet.rewardEnabled === false) {
+        res.status(403).json({ ok: false, error: 'NETWORK_REWARD_NOT_ELIGIBLE' });
+        return;
+      }
+
+      const envStatus = getAppLixirBackendEnvStatus();
+      const hasSiteId =
+        isValidAppLixirSiteOrKey(placementStr) ||
+        isValidAppLixirSiteOrKey(String(appNet?.websiteId || '')) ||
+        isValidAppLixirSiteOrKey(String(appNet?.placementId || '')) ||
+        envStatus.siteIdConfigured;
+      const hasSecretKey =
+        envStatus.secretKeyConfigured || Boolean(String(appSec.callbackSecret || '').trim());
+      const hasApiKey =
+        envStatus.apiKeyConfigured || Boolean(String(appSec.apiKey || '').trim());
+
+      if (!hasSiteId || !hasSecretKey || !hasApiKey) {
+        res.status(412).json({
+          ok: false,
+          error: 'APPLIXIR_NOT_CONFIGURED',
+          missing: {
+            siteId: !hasSiteId,
+            apiKey: !hasApiKey,
+            secretKey: !hasSecretKey,
+          },
+        });
+        return;
+      }
+    }
+
     const daily = dailySnap.exists ? dailySnap.data()! : {};
     const completedCount = Number(daily.completedCount || 0);
     const completedAdIds: string[] = Array.isArray(daily.completedAdIds)
@@ -830,21 +881,91 @@ export const enforceDailyAdLimit = onRequest({ cors: true }, async (req, res) =>
 
 async function handleVerifiedPostbackOrSdkCompletion(req: Request, res: HttpsResponse): Promise<void> {
   const source = (req.method === 'POST' ? (req.body ?? {}) : req.query) as Record<string, unknown>;
-  const sessionId = String(source.sessionId || source.session_id || source.ymid || '').trim();
-  const userId = String(source.userId || source.user_id || source.subid || '').trim();
-  const adId = String(source.adId || source.ad_id || '').trim();
-  const networkId = String(source.networkId || source.network_id || source.net || '').trim();
+
+  // Parse AppLixir v6 `customData` (URL-encoded JSON or raw sessionId string)
+  let customDataSessionId = '';
+  let customDataAdId = '';
+  const rawCustomData = source.customData;
+  if (typeof rawCustomData === 'string' && rawCustomData.trim()) {
+    const trimmedCustom = rawCustomData.trim();
+    if (trimmedCustom.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmedCustom) as Record<string, unknown>;
+        customDataSessionId = String(parsed.sessionId || parsed.session_id || '').trim();
+        customDataAdId = String(parsed.adId || parsed.ad_id || '').trim();
+      } catch {
+        // Ignore malformed customData JSON
+      }
+    } else {
+      customDataSessionId = trimmedCustom;
+    }
+  } else if (rawCustomData && typeof rawCustomData === 'object') {
+    const obj = rawCustomData as Record<string, unknown>;
+    customDataSessionId = String(obj.sessionId || obj.session_id || '').trim();
+    customDataAdId = String(obj.adId || obj.ad_id || '').trim();
+  }
+
+  const sessionId = sanitizeId(
+    String(
+      source.sessionId ||
+        source.session_id ||
+        source.ymid ||
+        customDataSessionId ||
+        source.custom1 ||
+        '',
+    ).trim(),
+  ).replace(/^id_\d+$/, '');
+  const rawUserId = String(
+    source.userId || source.user_id || source.userid || source.subid || '',
+  ).trim();
+  let userId = rawUserId;
+  let adId = String(
+    source.adId || source.ad_id || customDataAdId || source.custom2 || '',
+  ).trim();
+
+  const gameApiKey = String(source.gameApiKey || '').trim();
+  const gameId = String(source.gameId || '').trim();
+  const tid = String(source.tid || source.trans_id || '').trim();
+  const appLixirStatus = String(source.status || '').trim();
+  const appLixirSignature = String(source.signature || '').trim();
+  const appLixirSecretKeyParam = String(source.secretKey || '').trim();
+
+  let networkId = String(source.networkId || source.network_id || source.net || '').trim();
+  if (!networkId && (gameApiKey || gameId || tid || appLixirSignature)) {
+    networkId = 'applixir';
+  }
   const campaignId = String(source.campaignId || source.campaign_id || '').trim();
   const providerTxId = String(
-    source.providerTxId || source.provider_tx_id || source.tx_id || source.transaction_id || '',
+    source.providerTxId ||
+      source.provider_tx_id ||
+      source.tx_id ||
+      source.transaction_id ||
+      tid ||
+      '',
   ).trim();
-  const eventId = String(
-    source.eventId || source.event_id || providerTxId || '',
-  ).trim();
+  const eventId = String(source.eventId || source.event_id || providerTxId || '').trim();
   const rawTimestamp = source.ts ?? source.timestamp ?? req.headers['x-postback-timestamp'];
 
   const providedSecret = String(req.headers['x-postback-secret'] || source.secret || '').trim();
   const providedSignature = String(req.headers['x-postback-signature'] || source.sig || '').trim();
+
+  // Hydrate adId (and userId when omitted) from server-created adSessions/{sessionId}
+  if (sessionId && (!adId || !userId)) {
+    try {
+      const sessSnap = await db.collection('adSessions').doc(sessionId).get();
+      if (sessSnap.exists) {
+        const sess = sessSnap.data()!;
+        if (!adId && typeof sess.adId === 'string') {
+          adId = String(sess.adId).trim();
+        }
+        if (!userId && typeof sess.userId === 'string') {
+          userId = String(sess.userId).trim();
+        }
+      }
+    } catch {
+      // Downstream parameter validation handles missing fields safely
+    }
+  }
 
   const cbRate = await enforceRateLimit({
     bucketKey: `ad_cb_${hashNetworkIdentifier(req)}_${sanitizeId(userId || 'anon').slice(0, 24)}`,
@@ -874,6 +995,18 @@ async function handleVerifiedPostbackOrSdkCompletion(req: Request, res: HttpsRes
     providedSignature,
     rawTimestamp,
     clientIp: req.ip || 'unknown',
+    applixirParams:
+      networkId === 'applixir' || gameApiKey || gameId || tid || appLixirSignature || appLixirStatus
+        ? {
+            gameApiKey,
+            gameId,
+            rawUserId,
+            tid,
+            status: appLixirStatus,
+            signature: appLixirSignature,
+            secretKeyParam: appLixirSecretKeyParam,
+          }
+        : undefined,
     executeRewardTransaction: executeVerifiedAdRewardTransaction,
     onRewardCompleted: async (uid) => {
       await Promise.all([
@@ -971,9 +1104,11 @@ export const confirmSdkAdCompletion = onRequest({ cors: true }, async (req, res)
   const body = (req.body ?? {}) as Record<string, unknown>;
   const sessionId = sanitizeId(String(body.sessionId || '').trim());
   const adId = sanitizeId(String(body.adId || '').trim());
-  const sdkZoneId = String(body.sdkZoneId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  const rawSdkZone = String(body.sdkZoneId || '').trim();
+  const sdkZoneId = rawSdkZone.replace(/[^a-zA-Z0-9_.\-/]/g, '');
   const sdkVerified = body.sdkVerified === true;
   const watchedSeconds = Number(body.watchedSeconds || 0);
+  const platformContext = String(body.platformContext || '').trim();
 
   if (!sessionId || !adId || !sdkVerified || !sdkZoneId) {
     res.status(400).json({ ok: false, error: 'SDK_VERIFICATION_INCOMPLETE' });
@@ -1018,9 +1153,32 @@ export const confirmSdkAdCompletion = onRequest({ cors: true }, async (req, res)
       return;
     }
 
+    const adNetworkLower = String(adData.adNetwork || '').toLowerCase();
     const configuredPlacement = String(adData.placementOrUrl || '').trim();
+    if (adNetworkLower.includes('applixir') || /^applixir:/i.test(configuredPlacement)) {
+      res.status(403).json({
+        ok: false,
+        error: 'S2S_POSTBACK_REQUIRED',
+      });
+      return;
+    }
+    if (adNetworkLower.includes('monetag') && platformContext !== 'telegram_mini_app') {
+      res.status(403).json({
+        ok: false,
+        error: 'MONETAG_SDK_REQUIRES_TELEGRAM_MINI_APP',
+      });
+      return;
+    }
+
+    const configuredGamUnit = configuredPlacement.replace(/^gam:/i, '').trim();
+    const isGamPath =
+      platformContext === 'web_gpt' &&
+      /^\/\d{4,15}\/[a-zA-Z0-9_.\-/]{1,120}$/.test(configuredGamUnit) &&
+      configuredGamUnit === sdkZoneId;
     const numericPlacementMatch = configuredPlacement.match(/(\d{4,15})/);
-    if (!numericPlacementMatch || numericPlacementMatch[1] !== sdkZoneId) {
+    const isNumericMatch = Boolean(numericPlacementMatch && numericPlacementMatch[1] === sdkZoneId);
+
+    if (!isGamPath && !isNumericMatch) {
       res.status(403).json({ ok: false, error: 'SDK_ZONE_MISMATCH' });
       return;
     }
@@ -3203,7 +3361,9 @@ export const saveAdNetworkConfig = onRequest({ cors: true }, async (req, res) =>
 
   const logoKeyRaw = String(body.logoKey || 'custom');
   const logoKey =
-    logoKeyRaw === 'monetag' || logoKeyRaw === 'adsterra' ? logoKeyRaw : 'custom';
+    logoKeyRaw === 'monetag' || logoKeyRaw === 'applixir' || logoKeyRaw === 'adsterra'
+      ? logoKeyRaw
+      : 'custom';
 
   const publisherId = String(body.publisherId || '').trim().slice(0, 120);
   const websiteId = String(body.websiteId || '').trim().slice(0, 120);
@@ -3239,17 +3399,28 @@ export const saveAdNetworkConfig = onRequest({ cors: true }, async (req, res) =>
       );
     }
 
-    const secretConfigured = Boolean(nextCallbackSecret || nextApiKey);
+    const appLixirEnv = networkId === 'applixir' ? getAppLixirBackendEnvStatus() : null;
+    const hasSecretKey = Boolean(nextCallbackSecret || appLixirEnv?.secretKeyConfigured);
+    const hasApiKey = Boolean(nextApiKey || appLixirEnv?.apiKeyConfigured);
+    const secretConfigured =
+      networkId === 'applixir'
+        ? Boolean(hasSecretKey && hasApiKey)
+        : Boolean(nextCallbackSecret || nextApiKey);
     const secretHint = nextCallbackSecret
       ? `••••${nextCallbackSecret.slice(-4)}`
       : nextApiKey
         ? `••••${nextApiKey.slice(-4)}`
-        : '';
+        : appLixirEnv?.secretKeyConfigured && appLixirEnv?.apiKeyConfigured
+          ? 'BACKEND_ENV'
+          : '';
+
+    const effectiveWebsiteId =
+      websiteId || (networkId === 'applixir' ? (process.env.APPLIXIR_SITE_ID || '').trim() : '');
 
     const health = resolveNetworkHealthStatus({
       enabled,
       publisherId,
-      websiteId,
+      websiteId: effectiveWebsiteId,
       placementId,
       integrationType,
       rewardVerificationSupported,
@@ -3312,6 +3483,7 @@ export const saveAdNetworkConfig = onRequest({ cors: true }, async (req, res) =>
       secretConfigured,
       healthStatus: health.status,
       healthMessage: health.message,
+      ...(appLixirEnv ? { envCredentials: appLixirEnv } : {}),
     });
   } catch (err) {
     res.status(500).json({
@@ -3362,14 +3534,23 @@ export const testAdNetworkConnection = onRequest({ cors: true }, async (req, res
 
     const net = netSnap.data()!;
     const sec = secSnap.exists ? secSnap.data()! : {};
-    const secretConfigured = Boolean(sec.callbackSecret || sec.apiKey || net.secretConfigured);
+    const appLixirEnv = networkId === 'applixir' ? getAppLixirBackendEnvStatus() : null;
+    const secretConfigured =
+      networkId === 'applixir'
+        ? Boolean(
+            (sec.callbackSecret || appLixirEnv?.secretKeyConfigured) &&
+              (sec.apiKey || appLixirEnv?.apiKeyConfigured),
+          )
+        : Boolean(sec.callbackSecret || sec.apiKey || net.secretConfigured);
     const hasVerifiedCallbacks = !cbSnap.empty;
 
     let apiCheckOk: boolean | null = null;
     let apiCheckError = '';
 
     const apiBaseUrl = String(net.apiBaseUrl || '').trim();
-    const apiKey = String(sec.apiKey || '').trim();
+    const apiKey = String(
+      sec.apiKey || (networkId === 'applixir' ? process.env.APPLIXIR_API_KEY || '' : ''),
+    ).trim();
     if (apiBaseUrl && /^https:\/\/[a-zA-Z0-9.-]+/.test(apiBaseUrl) && apiKey) {
       try {
         const controller = new AbortController();
@@ -3393,10 +3574,14 @@ export const testAdNetworkConnection = onRequest({ cors: true }, async (req, res
       }
     }
 
+    const effectiveWebsiteId =
+      String(net.websiteId || '') ||
+      (networkId === 'applixir' ? (process.env.APPLIXIR_SITE_ID || '').trim() : '');
+
     const resolved = resolveNetworkHealthStatus({
       enabled: Boolean(net.enabled),
       publisherId: String(net.publisherId || ''),
-      websiteId: String(net.websiteId || ''),
+      websiteId: effectiveWebsiteId,
       placementId: String(net.placementId || ''),
       integrationType: String(net.integrationType || 's2s_postback'),
       rewardVerificationSupported: Boolean(net.rewardVerificationSupported),
@@ -3412,6 +3597,12 @@ export const testAdNetworkConnection = onRequest({ cors: true }, async (req, res
         healthStatus: resolved.status,
         healthMessage: resolved.message.slice(0, 300),
         secretConfigured,
+        ...(appLixirEnv &&
+        appLixirEnv.secretKeyConfigured &&
+        appLixirEnv.apiKeyConfigured &&
+        !net.secretHint
+          ? { secretHint: 'BACKEND_ENV' }
+          : {}),
         lastTestedAt: testedAt,
         updatedAt: FieldValue.serverTimestamp(),
       }),
@@ -3432,6 +3623,7 @@ export const testAdNetworkConnection = onRequest({ cors: true }, async (req, res
       healthStatus: resolved.status,
       healthMessage: resolved.message,
       testedAt,
+      ...(appLixirEnv ? { envCredentials: appLixirEnv } : {}),
     });
   } catch (err) {
     res.status(500).json({
