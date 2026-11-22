@@ -248,6 +248,8 @@ function runAllBackendSecurityTests(): void {
     'reconcileWalletLedger',
     'createAdSession',
     'verifyAdCompletion',
+    'confirmSdkAdCompletion',
+    'cancelAdSession',
     'processAdReward',
     'enforceDailyAdLimit',
     'verifyAdRewardPostback',
@@ -446,10 +448,20 @@ function runAllBackendSecurityTests(): void {
   }
   results.push(`Test 18 PASSED: Secret-isolation scan passed cleanly across all ${srcFiles.length} frontend source files`);
 
+  // Test 19: 30s Minimum Viewing Session, SDK Verification & Direct-Link Timer Guard
+  assert.match(FUNCTIONS_HELPERS, /MIN_AD_VIEW_DURATION_SEC = 30/);
+  assert.match(FUNCTIONS_HELPERS, /MIN_SECONDS_BETWEEN_COMPLETIONS = 30/);
+  assert.match(FUNCTIONS_INDEX, /S2S_POSTBACK_REQUIRED_FOR_DIRECT_LINK/);
+  assert.match(FUNCTIONS_INDEX, /elapsedSinceStartSec < requiredDurationSec/);
+  const adSessionsBlock = extractCollectionBlock('adSessions');
+  assert.match(adSessionsBlock, /incoming\(\)\.status == 'rejected'/);
+  assert.match(adSessionsBlock, /incoming\(\)\.transactionId == ''/);
+  results.push('Test 19 PASSED: 30s backend duration, direct-link SDK block & owner-reject-only adSessions rules verified');
+
   for (const line of results) {
     console.log(line);
   }
-  console.log(`\nALL ${results.length}/18 BACKEND SECURITY TESTS PASSED.`);
+  console.log(`\nALL ${results.length}/19 BACKEND SECURITY TESTS PASSED.`);
 }
 
 runAllBackendSecurityTests();

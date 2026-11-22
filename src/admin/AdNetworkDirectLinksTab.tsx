@@ -23,6 +23,7 @@ import {
   deleteAdPlacementRecord,
   saveAdPlacementOrDirectLink,
 } from '../services/adNetworkService';
+import { syncLinkedAdvertisementFields } from '../services/dashboardService';
 import { useToast } from '../components/ui/ToastProvider';
 
 interface AdNetworkDirectLinksTabProps {
@@ -153,6 +154,12 @@ export const AdNetworkDirectLinksTab: React.FC<AdNetworkDirectLinksTabProps> = (
         linkedAdId: form.linkedAdId,
         adminUser: { ...adminUser, role: adminRole },
       });
+      if (form.linkedAdId.trim()) {
+        await syncLinkedAdvertisementFields(form.linkedAdId.trim(), {
+          placementOrUrl: form.destinationUrl.trim() || form.zoneOrPlacementCode.trim(),
+          status: form.status,
+        });
+      }
       showToast(`Placement "${form.placementName}" saved.`, 'success');
       setModalOpen(false);
     } catch (err) {
@@ -165,6 +172,7 @@ export const AdNetworkDirectLinksTab: React.FC<AdNetworkDirectLinksTabProps> = (
   const handleToggleStatus = async (p: AdPlacementRecord) => {
     if (!canManage) return;
     setBusyId(p.placementId);
+    const nextStatus = p.status === 'active' ? 'inactive' : 'active';
     try {
       await saveAdPlacementOrDirectLink({
         placementId: p.placementId,
@@ -177,14 +185,17 @@ export const AdNetworkDirectLinksTab: React.FC<AdNetworkDirectLinksTabProps> = (
         zoneOrPlacementCode: p.zoneOrPlacementCode,
         startDate: p.startDate,
         endDate: p.endDate,
-        status: p.status === 'active' ? 'inactive' : 'active',
+        status: nextStatus,
         incentivizedTrafficApproved: p.incentivizedTrafficApproved,
         rewardEligible: p.rewardEligible,
         linkedAdId: p.linkedAdId,
         adminUser: { ...adminUser, role: adminRole },
       });
+      if (p.linkedAdId) {
+        await syncLinkedAdvertisementFields(p.linkedAdId, { status: nextStatus });
+      }
       showToast(
-        `"${p.placementName}" is now ${p.status === 'active' ? 'inactive' : 'active'}.`,
+        `"${p.placementName}" is now ${nextStatus}.`,
         'info',
       );
     } catch (err) {

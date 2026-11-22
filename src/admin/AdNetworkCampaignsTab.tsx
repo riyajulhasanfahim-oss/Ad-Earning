@@ -20,7 +20,11 @@ import {
 } from '../types';
 import { hasAdminPermission } from '../services/adminService';
 import { deleteAdCampaignRecord, saveAdCampaignRecord } from '../services/adNetworkService';
-import { saveAdvertisement } from '../services/dashboardService';
+import {
+  deleteAdvertisement,
+  saveAdvertisement,
+  syncLinkedAdvertisementFields,
+} from '../services/dashboardService';
 import { formatPoints } from '../services/appService';
 import { useToast } from '../components/ui/ToastProvider';
 
@@ -66,7 +70,7 @@ function emptyCampaignForm(networks: AdNetworkConfig[]): CampaignForm {
     rewardPoints: '50',
     dailyUserLimit: '5',
     globalDailyLimit: '500',
-    estimatedDuration: '20',
+    estimatedDuration: '30',
     startDate: '',
     endDate: '',
     targetCountries: 'ALL',
@@ -180,7 +184,7 @@ export const AdNetworkCampaignsTab: React.FC<AdNetworkCampaignsTabProps> = ({
         rewardPoints: eligible ? rewardPts : 0,
         dailyUserLimit: userLimit,
         globalDailyLimit: globalLimit,
-        estimatedDuration: Math.max(1, Math.floor(Number(form.estimatedDuration || 20))),
+        estimatedDuration: Math.max(30, Math.floor(Number(form.estimatedDuration || 30))),
         startDate: form.startDate,
         endDate: form.endDate,
         targetCountries: form.targetCountries,
@@ -201,7 +205,7 @@ export const AdNetworkCampaignsTab: React.FC<AdNetworkCampaignsTabProps> = ({
           placementOrUrl: placement?.destinationUrl || placement?.zoneOrPlacementCode || net?.placementId || '',
           rewardPoints: rewardPts,
           dailyLimit: userLimit,
-          estimatedDuration: Math.max(1, Math.floor(Number(form.estimatedDuration || 20))),
+          estimatedDuration: Math.max(30, Math.floor(Number(form.estimatedDuration || 30))),
           startDate: form.startDate,
           endDate: form.endDate,
           status: form.status,
@@ -225,6 +229,7 @@ export const AdNetworkCampaignsTab: React.FC<AdNetworkCampaignsTabProps> = ({
   const handleToggle = async (c: AdCampaignRecord) => {
     if (!canManage) return;
     setBusyId(c.campaignId);
+    const nextStatus = c.status === 'active' ? 'inactive' : 'active';
     try {
       await saveAdCampaignRecord({
         campaignId: c.campaignId,
@@ -243,10 +248,13 @@ export const AdNetworkCampaignsTab: React.FC<AdNetworkCampaignsTabProps> = ({
         rewardVerificationMethod: c.rewardVerificationMethod,
         incentivizedTrafficAllowed: c.incentivizedTrafficAllowed,
         rewardEligible: c.rewardEligible,
-        status: c.status === 'active' ? 'inactive' : 'active',
+        status: nextStatus,
         linkedAdId: c.linkedAdId,
         adminUser: { ...adminUser, role: adminRole },
       });
+      if (c.linkedAdId) {
+        await syncLinkedAdvertisementFields(c.linkedAdId, { status: nextStatus });
+      }
       showToast(`Campaign "${c.campaignName}" toggled.`, 'info');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Toggle failed.', 'error');
@@ -263,6 +271,9 @@ export const AdNetworkCampaignsTab: React.FC<AdNetworkCampaignsTabProps> = ({
         campaign: c,
         adminUser: { ...adminUser, role: adminRole },
       });
+      if (c.linkedAdId) {
+        await deleteAdvertisement(c.linkedAdId).catch(() => {});
+      }
       showToast(`Deleted campaign "${c.campaignName}".`, 'info');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Delete failed.', 'error');
@@ -523,10 +534,10 @@ export const AdNetworkCampaignsTab: React.FC<AdNetworkCampaignsTabProps> = ({
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-300">Duration (sec)</label>
+                  <label className="font-semibold text-slate-300">Duration (min 30s)</label>
                   <input
                     type="number"
-                    min={1}
+                    min={30}
                     value={form.estimatedDuration}
                     onChange={(e) => setForm({ ...form, estimatedDuration: e.target.value })}
                     className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num"

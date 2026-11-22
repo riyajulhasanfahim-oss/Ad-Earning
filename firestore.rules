@@ -903,7 +903,27 @@ service cloud.firestore {
           get(/databases/$(database)/documents/advertisements/$(incoming().adId)).data.adType != 'direct_link' ||
           get(/databases/$(database)/documents/advertisements/$(incoming().adId)).data.incentivizedTrafficAllowed == true
         );
-      allow update, delete: if isValidId(sessionId) && isAdmin();
+      allow update: if isValidId(sessionId) && (
+        isAdmin() ||
+        (
+          isEmailVerified() &&
+          isValidAdSession(incoming()) &&
+          existing().userId == request.auth.uid &&
+          existing().status == 'pending' &&
+          incoming().status == 'rejected' &&
+          incoming().sessionId == existing().sessionId &&
+          incoming().userId == existing().userId &&
+          incoming().adId == existing().adId &&
+          incoming().adName == existing().adName &&
+          incoming().adNetwork == existing().adNetwork &&
+          incoming().expectedRewardPoints == existing().expectedRewardPoints &&
+          incoming().dhakaDate == existing().dhakaDate &&
+          incoming().transactionId == '' &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'rejectionReason'])
+        )
+      );
+      allow delete: if isValidId(sessionId) && isAdmin();
     }
 
     // 12. Server-Verified Idempotent Ad Completions (Read-only for owner & support)

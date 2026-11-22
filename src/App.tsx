@@ -75,6 +75,10 @@ import { GlassCard } from './components/ui/GlassCard';
 import { useToast } from './components/ui/ToastProvider';
 import { HomePage } from './pages/HomePage';
 import { InstallAppBanner } from './components/pwa/InstallAppBanner';
+import { AdWatchSessionModal } from './components/ads/AdWatchSessionModal';
+import { buildPlacementLaunchUrl, resolveAdLaunchKind } from './services/adNetworkPolicy';
+import { getDhakaDateKey } from './services/appService';
+import { extractMonetagZoneId, preloadMonetagSdk } from './services/monetagSdk';
 
 const AuthModal = lazy(() =>
   import('./components/auth/AuthModal').then((m) => ({ default: m.AuthModal })),
@@ -233,7 +237,21 @@ export default function App() {
   // Active ad watching state
   const [activeWatchAd, setActiveWatchAd] = useState<Advertisement | null>(null);
   const [activeWatchSessionId, setActiveWatchSessionId] = useState<string | null>(null);
+  const [activeWatchStartedAtMs, setActiveWatchStartedAtMs] = useState<number>(0);
+  const [watchOverlayOpen, setWatchOverlayOpen] = useState(false);
+  const [watchPopupBlocked, setWatchPopupBlocked] = useState(false);
   const [initiatingAdId, setInitiatingAdId] = useState<string | null>(null);
+
+  // Preload Monetag Rewarded SDK zones in background so Watch Ad triggers immediately on click
+  useEffect(() => {
+    for (const ad of activeAds) {
+      if (ad.status !== 'active') continue;
+      const zoneId = extractMonetagZoneId(ad.placementOrUrl);
+      if (zoneId) {
+        void preloadMonetagSdk(zoneId);
+      }
+    }
+  }, [activeAds]);
 
   useEffect(() => {
     isAdminAuthorizedRef.current = Boolean(adminSession?.authorized);
@@ -735,6 +753,41 @@ export default function App() {
       return;
     }
     if (initiatingAdId) return;
+
+    // Synchronous pre-checks before opening any popup window
+    const globalLimit = economy.dailyAdLimit || DEFAULT_DAILY_AD_LIMIT;
+    const todayDhaka = getDhakaDateKey();
+    const todayCompletedList = adCompletions.filter(
+      (c) => c.dhakaDate === todayDhaka && c.status === 'completed',
+    );
+    const completedGlobal =
+      dailyAdLimit && dailyAdLimit.dhakaDate === todayDhaka
+        ? dailyAdLimit.completedCount
+        : todayCompletedList.length;
+    const completedForAd = todayCompletedList.filter((c) => c.adId === ad.adId).length;
+
+    const launchKind = resolveAdLaunchKind(ad.placementOrUrl);
+    const canPreOpenWindow =
+      launchKind === 'external_url' &&
+      economy.earningEnabled &&
+      activeUser.accountStatus === 'active' &&
+      ad.status === 'active' &&
+      completedGlobal < globalLimit &&
+      completedForAd < ad.dailyLimit;
+
+    // Open blank tab synchronously inside user click gesture to prevent mobile/desktop popup blocking
+    let preOpenedWindow: Window | null = null;
+    if (canPreOpenWindow && typeof window !== 'undefined') {
+      try {
+        preOpenedWindow = window.open('about:blank', '_blank');
+        if (preOpenedWindow) {
+          preOpenedWindow.opener = null;
+        }
+      } catch {
+        preOpenedWindow = null;
+      }
+    }
+
     setInitiatingAdId(ad.adId);
     try {
       const session = await initiateAdSession(
@@ -742,13 +795,41 @@ export default function App() {
         ad,
         adCompletions,
         dailyAdLimit,
-        economy.dailyAdLimit || DEFAULT_DAILY_AD_LIMIT,
+        globalLimit,
         economy.earningEnabled,
       );
+
+      let blocked = false;
+      if (launchKind === 'external_url') {
+        const launchUrl = buildPlacementLaunchUrl(ad.placementOrUrl, {
+          sessionId: session.sessionId,
+          userId: session.userId,
+          adId: ad.adId,
+          adNetwork: ad.adNetwork,
+        });
+        if (launchUrl && preOpenedWindow && !preOpenedWindow.closed) {
+          preOpenedWindow.location.replace(launchUrl);
+        } else {
+          if (preOpenedWindow && !preOpenedWindow.closed) {
+            preOpenedWindow.close();
+          }
+          if (launchUrl) {
+            blocked = true;
+          }
+        }
+      } else if (preOpenedWindow && !preOpenedWindow.closed) {
+        preOpenedWindow.close();
+      }
+
       setActiveWatchAd(ad);
       setActiveWatchSessionId(session.sessionId);
-      setCurrentPage('watch-ad');
+      setActiveWatchStartedAtMs(Date.now());
+      setWatchPopupBlocked(blocked);
+      setWatchOverlayOpen(true);
     } catch (err) {
+      if (preOpenedWindow && !preOpenedWindow.closed) {
+        preOpenedWindow.close();
+      }
       showToast(err instanceof Error ? err.message : 'Could not start ad session.', 'error');
     } finally {
       setInitiatingAdId(null);
@@ -1060,6 +1141,7 @@ export default function App() {
             transactions={transactions}
             loading={Boolean(firebaseUser) && !dashboardDataLoaded && profileLoading}
             isAuthenticated={Boolean(firebaseUser)}
+            initiatingAdId={initiatingAdId}
             autoOpenBonusModal={autoOpenBonusModal}
             onAutoBonusHandled={() => setAutoOpenBonusModal(false)}
             onOpenAuth={(mode) => openAuthModal(mode ?? 'login')}
@@ -1097,6 +1179,21 @@ export default function App() {
         </AnimatePresence>
       </AppShell>
 
+      {watchOverlayOpen && activeWatchAd && currentWatchSession && (
+        <AdWatchSessionModal
+          ad={activeWatchAd}
+          session={currentWatchSession}
+          startedAtMs={activeWatchStartedAtMs || currentWatchSession.createdAtMillis || Date.now()}
+          popupBlocked={watchPopupBlocked}
+          onClose={() => {
+            setWatchOverlayOpen(false);
+            setWatchPopupBlocked(false);
+          }}
+          onSuccessToast={(msg) => showToast(msg, 'success')}
+          onInfoToast={(msg) => showToast(msg, 'info')}
+        />
+      )}
+
       {!firebaseUser && authModalOpen && (
         <Suspense fallback={null}>
           <AuthModal
@@ -1119,7 +1216,7 @@ export default function App() {
         </Suspense>
       )}
 
-      {!authModalOpen && currentPage !== 'watch-ad' && (
+      {!authModalOpen && !watchOverlayOpen && currentPage !== 'watch-ad' && (
         <InstallAppBanner siteName={siteSettings.websiteName} />
       )}
     </>

@@ -133,7 +133,7 @@ export function formatVerificationMethodLabel(method: RewardVerificationMethod):
 
 export function buildPlacementLaunchUrl(
   placementOrUrl: string,
-  params: { sessionId: string; userId: string; adId: string },
+  params: { sessionId: string; userId: string; adId: string; adNetwork?: string },
 ): string | null {
   const trimmed = placementOrUrl.trim();
   if (!/^https?:\/\//i.test(trimmed)) {
@@ -146,14 +146,37 @@ export function buildPlacementLaunchUrl(
       .replace(/\{adId\}|\{ad_id\}/gi, encodeURIComponent(params.adId));
 
     const url = new URL(resolved);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      return null;
+    }
     if (!url.searchParams.has('session_id') && !trimmed.toLowerCase().includes('session')) {
       url.searchParams.set('session_id', params.sessionId);
     }
     if (!url.searchParams.has('subid') && !trimmed.toLowerCase().includes('user')) {
       url.searchParams.set('subid', params.userId);
     }
+    if (
+      params.adNetwork?.toLowerCase().includes('monetag') &&
+      !url.searchParams.has('ymid')
+    ) {
+      url.searchParams.set('ymid', params.sessionId);
+    }
     return url.toString();
   } catch {
     return null;
   }
 }
+
+export type AdLaunchKind = 'monetag_sdk' | 'external_url' | 'unconfigured';
+
+export function resolveAdLaunchKind(placementOrUrl: string): AdLaunchKind {
+  const trimmed = placementOrUrl.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    return 'external_url';
+  }
+  if (/^(\d{4,15})$/.test(trimmed) || /^(?:monetag:\/\/|monetag:|zone:|zone_id[:=])(\d{4,15})$/i.test(trimmed)) {
+    return 'monetag_sdk';
+  }
+  return 'unconfigured';
+}
+

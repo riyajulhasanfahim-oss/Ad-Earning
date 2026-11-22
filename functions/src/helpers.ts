@@ -18,7 +18,8 @@ export type AdminRole = 'super_admin' | 'admin' | 'support_admin';
 
 export const BOOTSTRAP_SUPER_ADMIN_EMAIL = 'riyajulhasanfahim@gmail.com';
 export const DEFAULT_GLOBAL_DAILY_AD_LIMIT = 20;
-export const MIN_SECONDS_BETWEEN_COMPLETIONS = 10;
+export const MIN_SECONDS_BETWEEN_COMPLETIONS = 30;
+export const MIN_AD_VIEW_DURATION_SEC = 30;
 
 export const PAYMENT_FEES: Record<string, number> = {
   bkash: 2,

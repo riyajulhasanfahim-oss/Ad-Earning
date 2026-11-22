@@ -75,7 +75,7 @@ function emptyAdForm(): AdFormState {
     placementOrUrl: '',
     rewardPoints: '50',
     dailyLimit: '5',
-    estimatedDuration: '20',
+    estimatedDuration: '30',
     startDate: '',
     endDate: '',
     status: 'active',
@@ -183,7 +183,7 @@ export const AdminAdsSection: React.FC<AdminAdsSectionProps> = ({
         placementOrUrl: form.placementOrUrl,
         rewardPoints: Math.floor(rewardPts),
         dailyLimit: Math.max(1, Math.floor(Number(form.dailyLimit || 5))),
-        estimatedDuration: Math.max(1, Math.floor(Number(form.estimatedDuration || 15))),
+        estimatedDuration: Math.max(30, Math.floor(Number(form.estimatedDuration || 30))),
         startDate: form.startDate,
         endDate: form.endDate,
         status: form.status,
@@ -558,10 +558,10 @@ export const AdminAdsSection: React.FC<AdminAdsSectionProps> = ({
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-300">Duration (sec)</label>
+                  <label className="font-semibold text-slate-300">Duration (min 30s)</label>
                   <input
                     type="number"
-                    min={1}
+                    min={30}
                     value={form.estimatedDuration}
                     onChange={(e) => setForm({ ...form, estimatedDuration: e.target.value })}
                     className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num"

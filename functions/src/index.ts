@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as functionsV1 from 'firebase-functions/v1';
 import { onRequest } from 'firebase-functions/v2/https';
 import type { Request } from 'firebase-functions/v2/https';
@@ -19,6 +20,7 @@ import {
   logSystemError,
   maskAccountNumber,
   maskPublicUsername,
+  MIN_AD_VIEW_DURATION_SEC,
   MIN_SECONDS_BETWEEN_COMPLETIONS,
   PAYMENT_FEES,
   readActiveAppSettings,
@@ -36,6 +38,7 @@ import {
 } from './walletCore';
 import {
   processVerifiedNetworkCallback,
+  recordAdAnalyticsDelta,
   resolveNetworkHealthStatus,
   writeAdNetworkLog,
 } from './adNetworkEngine';
@@ -476,22 +479,6 @@ async function executeVerifiedAdRewardTransaction(params: {
     if (sessionData.status !== 'pending') {
       throw new Error('SESSION_ALREADY_FINALIZED');
     }
-    const sessionCreatedAt = sessionData.createdAt;
-    if (sessionCreatedAt && typeof sessionCreatedAt.toMillis === 'function') {
-      const elapsedSinceStartSec = (Date.now() - sessionCreatedAt.toMillis()) / 1000;
-      if (elapsedSinceStartSec < 2) {
-        throw new Error('ABNORMALLY_FAST_AD_COMPLETION');
-      }
-    }
-
-    if (!userSnap.exists) {
-      throw new Error('USER_NOT_FOUND');
-    }
-    const userData = userSnap.data()!;
-    if (userData.accountStatus !== 'active') {
-      throw new Error('USER_NOT_ACTIVE');
-    }
-
     if (!adSnap.exists) {
       throw new Error('AD_NOT_FOUND');
     }
@@ -504,6 +491,27 @@ async function executeVerifiedAdRewardTransaction(params: {
     }
     if (adData.adType === 'direct_link' && adData.incentivizedTrafficAllowed !== true) {
       throw new Error('INCENTIVIZED_TRAFFIC_DISALLOWED');
+    }
+
+    const sessionCreatedAt = sessionData.createdAt;
+    if (!sessionCreatedAt || typeof sessionCreatedAt.toMillis !== 'function') {
+      throw new Error('INVALID_SESSION_TIMESTAMP');
+    }
+    const requiredDurationSec = Math.max(
+      MIN_AD_VIEW_DURATION_SEC,
+      Number(adData.estimatedDuration || MIN_AD_VIEW_DURATION_SEC),
+    );
+    const elapsedSinceStartSec = (Date.now() - sessionCreatedAt.toMillis()) / 1000;
+    if (elapsedSinceStartSec < requiredDurationSec) {
+      throw new Error('ABNORMALLY_FAST_AD_COMPLETION');
+    }
+
+    if (!userSnap.exists) {
+      throw new Error('USER_NOT_FOUND');
+    }
+    const userData = userSnap.data()!;
+    if (userData.accountStatus !== 'active') {
+      throw new Error('USER_NOT_ACTIVE');
     }
 
     const existingDaily = dailyLimitSnap.exists ? dailyLimitSnap.data()! : null;
@@ -683,7 +691,8 @@ export const createAdSession = onRequest({ cors: true }, async (req, res) => {
   }
 
   const dhakaToday = getDhakaDateKey();
-  const sessionId = sanitizeId(`sess_${Date.now()}_${uid.slice(0, 6)}_${Math.random().toString(36).slice(2, 8)}`);
+  const randomToken = crypto.randomBytes(6).toString('hex');
+  const sessionId = sanitizeId(`sess_${Date.now()}_${uid.slice(0, 6)}_${randomToken}`);
 
   try {
     const [settings, userSnap, adSnap, dailySnap] = await Promise.all([
@@ -730,7 +739,12 @@ export const createAdSession = onRequest({ cors: true }, async (req, res) => {
       return;
     }
 
-    await db.collection('adSessions').doc(sessionId).set({
+    const requiredDurationSec = Math.max(
+      MIN_AD_VIEW_DURATION_SEC,
+      Number(adData.estimatedDuration || MIN_AD_VIEW_DURATION_SEC),
+    );
+
+    await db.collection('adSessions').doc(sessionId).create({
       sessionId,
       userId: uid,
       adId,
@@ -744,7 +758,13 @@ export const createAdSession = onRequest({ cors: true }, async (req, res) => {
       createdAt: FieldValue.serverTimestamp(),
     });
 
-    res.status(200).json({ ok: true, sessionId, adId, dhakaDate: dhakaToday });
+    res.status(200).json({
+      ok: true,
+      sessionId,
+      adId,
+      dhakaDate: dhakaToday,
+      requiredDurationSec,
+    });
   } catch (err) {
     res.status(500).json({
       ok: false,
@@ -879,14 +899,14 @@ async function handleVerifiedPostbackOrSdkCompletion(req: Request, res: HttpsRes
     const errCode = String(result.body.error || 'CALLBACK_REJECTED');
     if (errCode === 'ABNORMALLY_FAST_AD_COMPLETION' && userId) {
       const assessment = evaluateRiskFactors([
-        { signal: `Abnormally fast ad completion attempt (< 2s) on ad ${adId}`, weight: 65 },
+        { signal: `Abnormally fast ad completion attempt (< ${MIN_AD_VIEW_DURATION_SEC}s) on ad ${adId}`, weight: 65 },
       ]);
       await createFraudReport({
         category: 'ad_reward',
         assessment,
         userId,
         title: 'Abnormally Fast Ad Completion Blocked',
-        details: `Callback for session ${sessionId} (${adId}) arrived too fast (<2s) and was rejected.`,
+        details: `Callback for session ${sessionId} (${adId}) arrived before ${MIN_AD_VIEW_DURATION_SEC}s elapsed and was rejected.`,
         relatedTxId: providerTxId || eventId,
         actionTaken: 'Reward rejected safely',
       });
@@ -923,6 +943,250 @@ export const processAdReward = onRequest(
   { cors: false, secrets: ['POSTBACK_SECRET'] },
   handleVerifiedPostbackOrSdkCompletion,
 );
+
+export const confirmSdkAdCompletion = onRequest({ cors: true }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  const check = await verifyAuthAndRole(req, { requireVerifiedEmail: true });
+  if (!check.auth) {
+    res.status(check.status || 401).json({ ok: false, error: check.error });
+    return;
+  }
+
+  const uid = check.auth.uid;
+  const sdkRate = await enforceRateLimit({
+    bucketKey: `sdk_reward_${uid}`,
+    actionName: 'confirmSdkAdCompletion',
+    actorId: uid,
+    maxRequests: 15,
+    windowSeconds: 60,
+  });
+  if (!sdkRate.allowed) {
+    res.status(429).json({
+      ok: false,
+      error: 'RATE_LIMIT_EXCEEDED',
+      retryAfterSec: sdkRate.retryAfterSec,
+    });
+    return;
+  }
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const sessionId = sanitizeId(String(body.sessionId || '').trim());
+  const adId = sanitizeId(String(body.adId || '').trim());
+  const sdkZoneId = String(body.sdkZoneId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  const sdkVerified = body.sdkVerified === true;
+  const watchedSeconds = Number(body.watchedSeconds || 0);
+
+  if (!sessionId || !adId || !sdkVerified || !sdkZoneId) {
+    res.status(400).json({ ok: false, error: 'SDK_VERIFICATION_INCOMPLETE' });
+    return;
+  }
+
+  try {
+    const [sessionSnap, adSnap] = await Promise.all([
+      db.collection('adSessions').doc(sessionId).get(),
+      db.collection('advertisements').doc(adId).get(),
+    ]);
+
+    if (!sessionSnap.exists) {
+      res.status(404).json({ ok: false, error: 'SESSION_NOT_FOUND' });
+      return;
+    }
+    const sessionData = sessionSnap.data()!;
+    if (sessionData.userId !== uid || sessionData.adId !== adId) {
+      res.status(403).json({ ok: false, error: 'SESSION_MISMATCH' });
+      return;
+    }
+    if (sessionData.status !== 'pending') {
+      res.status(409).json({ ok: false, error: 'SESSION_ALREADY_FINALIZED' });
+      return;
+    }
+    if (!adSnap.exists) {
+      res.status(404).json({ ok: false, error: 'AD_NOT_FOUND' });
+      return;
+    }
+    const adData = adSnap.data()!;
+    if (adData.status !== 'active') {
+      res.status(403).json({ ok: false, error: 'AD_INACTIVE' });
+      return;
+    }
+    // Direct links MUST NEVER be rewarded via client/SDK timer alone
+    if (adData.adType === 'direct_link') {
+      res.status(403).json({ ok: false, error: 'S2S_POSTBACK_REQUIRED_FOR_DIRECT_LINK' });
+      return;
+    }
+    if (adData.rewardVerificationMethod !== 'sdk_callback') {
+      res.status(403).json({ ok: false, error: 'S2S_POSTBACK_REQUIRED' });
+      return;
+    }
+
+    const configuredPlacement = String(adData.placementOrUrl || '').trim();
+    const numericPlacementMatch = configuredPlacement.match(/(\d{4,15})/);
+    if (!numericPlacementMatch || numericPlacementMatch[1] !== sdkZoneId) {
+      res.status(403).json({ ok: false, error: 'SDK_ZONE_MISMATCH' });
+      return;
+    }
+
+    const requiredDurationSec = Math.max(
+      MIN_AD_VIEW_DURATION_SEC,
+      Number(adData.estimatedDuration || MIN_AD_VIEW_DURATION_SEC),
+    );
+    const createdAt = sessionData.createdAt;
+    const elapsedSec =
+      createdAt && typeof createdAt.toMillis === 'function'
+        ? (Date.now() - createdAt.toMillis()) / 1000
+        : 0;
+
+    if (elapsedSec < requiredDurationSec || watchedSeconds < requiredDurationSec) {
+      const assessment = evaluateRiskFactors([
+        {
+          signal: `Early SDK completion attempt (${elapsedSec.toFixed(1)}s < ${requiredDurationSec}s) on ad ${adId}`,
+          weight: 55,
+        },
+      ]);
+      await createFraudReport({
+        category: 'ad_reward',
+        assessment,
+        userId: uid,
+        title: 'Early Ad Completion Attempt Blocked',
+        details: `SDK completion for session ${sessionId} arrived after ${elapsedSec.toFixed(1)}s (min ${requiredDurationSec}s).`,
+        relatedTxId: sessionId,
+        actionTaken: 'Reward denied',
+      });
+      res.status(409).json({
+        ok: false,
+        error: 'ABNORMALLY_FAST_AD_COMPLETION',
+        requiredDurationSec,
+        elapsedSec: Math.floor(elapsedSec),
+      });
+      return;
+    }
+
+    const providerTxId = sanitizeId(`sdk_${sessionId}`);
+    const outcome = await executeVerifiedAdRewardTransaction({
+      sessionId,
+      userId: uid,
+      adId,
+      providerTxId,
+    });
+
+    const dhakaToday = getDhakaDateKey();
+    const networkName = String(adData.adNetwork || 'Monetag');
+    const networkId = networkName.toLowerCase().includes('monetag')
+      ? 'monetag'
+      : sanitizeId(networkName.toLowerCase());
+    const callbackId = sanitizeId(`cb_sdk_${sessionId}`);
+
+    await Promise.all([
+      db.collection('adCallbacks').doc(callbackId).set({
+        callbackId,
+        eventId: providerTxId,
+        networkId,
+        campaignId: '',
+        sessionId,
+        userId: uid,
+        status: 'processed',
+        signatureValid: true,
+        timestampValid: true,
+        replayDetected: false,
+        rewardPoints: outcome.rewardPoints,
+        rejectionReason: '',
+        callbackTimestampSec: Math.floor(Date.now() / 1000),
+        createdAt: FieldValue.serverTimestamp(),
+      }),
+      recordAdAnalyticsDelta({
+        networkId,
+        networkName,
+        dhakaDate: dhakaToday,
+        clicksSupported: false,
+        deltaImpressions: 1,
+        deltaVerified: 1,
+        deltaRewards: outcome.rewardPoints,
+      }),
+      writeAdNetworkLog({
+        networkId,
+        actorUid: uid,
+        eventType: 'sdk_callback_processed',
+        severity: 'info',
+        status: 'processed',
+        details: `Verified Rewarded SDK completion (zone=${sdkZoneId}, ${Math.floor(elapsedSec)}s) for user=${uid}, +${outcome.rewardPoints} Pts`,
+      }),
+      processReferralQualification(uid),
+      writeSecurityAuditLog({
+        userId: uid,
+        eventType: 'ad_reward_credited',
+        category: 'ad_reward',
+        severity: 'info',
+        transactionId: outcome.txId,
+        details: `Verified SDK callback credited +${outcome.rewardPoints} Pts for ad ${adId} (session ${sessionId})`,
+      }),
+    ]);
+
+    res.status(200).json({ ok: true, ...outcome });
+  } catch (err) {
+    const code = err instanceof Error ? err.message : 'SDK_VERIFICATION_FAILED';
+    const statusCode =
+      code === 'DUPLICATE_PROVIDER_TX' || code === 'SESSION_ALREADY_FINALIZED' || code === 'ABNORMALLY_FAST_AD_COMPLETION'
+        ? 409
+        : code === 'GLOBAL_DAILY_LIMIT_REACHED' || code === 'PER_AD_DAILY_LIMIT_REACHED' || code === 'RATE_LIMIT_EXCEEDED'
+          ? 429
+          : 400;
+    res.status(statusCode).json({ ok: false, error: code });
+  }
+});
+
+export const cancelAdSession = onRequest({ cors: true }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  const check = await verifyAuthAndRole(req, { requireVerifiedEmail: true });
+  if (!check.auth) {
+    res.status(check.status || 401).json({ ok: false, error: check.error });
+    return;
+  }
+
+  const uid = check.auth.uid;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const sessionId = sanitizeId(String(body.sessionId || '').trim());
+  const reason = String(body.reason || 'CLOSED_BEFORE_30_SECONDS').trim().slice(0, 180);
+
+  if (!sessionId) {
+    res.status(400).json({ ok: false, error: 'Missing sessionId' });
+    return;
+  }
+
+  try {
+    const sessionRef = db.collection('adSessions').doc(sessionId);
+    const result = await db.runTransaction(async (txn) => {
+      const snap = await txn.get(sessionRef);
+      if (!snap.exists) {
+        return { found: false, alreadyFinalized: false };
+      }
+      const data = snap.data()!;
+      if (data.userId !== uid) {
+        throw new Error('SESSION_MISMATCH');
+      }
+      if (data.status !== 'pending') {
+        return { found: true, alreadyFinalized: true, status: String(data.status) };
+      }
+      txn.update(sessionRef, {
+        status: 'rejected',
+        rejectionReason: reason || 'CLOSED_BEFORE_30_SECONDS',
+      });
+      return { found: true, alreadyFinalized: false, status: 'rejected' };
+    });
+
+    res.status(200).json({ ok: true, ...result });
+  } catch (err) {
+    const code = err instanceof Error ? err.message : 'CANCEL_SESSION_FAILED';
+    res.status(code === 'SESSION_MISMATCH' ? 403 : 500).json({ ok: false, error: code });
+  }
+});
 
 // ============================================================================
 // 4. WITHDRAWAL LIFECYCLE FUNCTIONS

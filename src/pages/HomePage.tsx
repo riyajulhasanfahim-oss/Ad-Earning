@@ -63,6 +63,7 @@ interface HomePageProps {
   transactions: TransactionRecord[];
   loading: boolean;
   isAuthenticated?: boolean;
+  initiatingAdId?: string | null;
   autoOpenBonusModal?: boolean;
   onAutoBonusHandled?: () => void;
   onOpenAuth?: (mode?: 'login' | 'register') => void;
@@ -113,6 +114,7 @@ export const HomePage: React.FC<HomePageProps> = React.memo(({
   transactions,
   loading,
   isAuthenticated = true,
+  initiatingAdId = null,
   autoOpenBonusModal = false,
   onAutoBonusHandled,
   onOpenAuth,
@@ -947,7 +949,7 @@ export const HomePage: React.FC<HomePageProps> = React.memo(({
                       </div>
                       <button
                         type="button"
-                        disabled={!isActive}
+                        disabled={!isActive || initiatingAdId === ad.adId}
                         onClick={() => onStartWatchAd(ad)}
                         className={`min-h-[42px] px-4 py-2 rounded-full text-white text-xs font-extrabold whitespace-nowrap shrink-0 transition-all active:scale-[0.97] disabled:opacity-45 disabled:pointer-events-none ${theme.btn}`}
                       >

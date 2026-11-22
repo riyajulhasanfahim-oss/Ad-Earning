@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   CheckCircle2,
   Clock,
   ExternalLink,
   Loader2,
+  Play,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -17,6 +18,15 @@ import {
   getAdNetworkAdapter,
 } from '../services/adNetworkPolicy';
 import { formatPoints } from '../services/appService';
+import {
+  cancelPendingAdSession,
+  confirmSdkAdSessionReward,
+  MIN_AD_VIEW_SECONDS,
+} from '../services/dashboardService';
+import {
+  extractMonetagZoneId,
+  showMonetagRewardedAd,
+} from '../services/monetagSdk';
 import { GlassCard } from '../components/ui/GlassCard';
 
 interface AdWatchSessionPageProps {
@@ -31,14 +41,109 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
   onBackToAds,
 }) => {
   const adapter = getAdNetworkAdapter(ad.adNetwork);
+  const requiredDuration = Math.max(
+    MIN_AD_VIEW_SECONDS,
+    Number(ad.estimatedDuration || MIN_AD_VIEW_SECONDS),
+  );
+  const startedAtMs = useMemo(
+    () => (session.createdAtMillis > 0 ? session.createdAtMillis : Date.now()),
+    [session.createdAtMillis],
+  );
+  const [elapsedSec, setElapsedSec] = useState<number>(() =>
+    Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000)),
+  );
+  const [sdkStatus, setSdkStatus] = useState<'idle' | 'launching' | 'verified' | 'failed'>('idle');
+  const [sdkError, setSdkError] = useState('');
+  const [verifyError, setVerifyError] = useState('');
+  const [verifiedTxId, setVerifiedTxId] = useState('');
+  const sdkVerifyRequestedRef = useRef('');
+
+  const monetagZoneId = extractMonetagZoneId(ad.placementOrUrl);
   const launchUrl = buildPlacementLaunchUrl(ad.placementOrUrl, {
     sessionId: session.sessionId,
     userId: session.userId,
     adId: ad.adId,
+    adNetwork: ad.adNetwork,
   });
 
+  useEffect(() => {
+    const sync = () => setElapsedSec(Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000)));
+    sync();
+    const timer = window.setInterval(sync, 250);
+    document.addEventListener('visibilitychange', sync);
+    window.addEventListener('focus', sync);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', sync);
+      window.removeEventListener('focus', sync);
+    };
+  }, [startedAtMs]);
+
+  const remainingSec = Math.max(0, requiredDuration - elapsedSec);
+  const timerDone = remainingSec === 0;
+
+  useEffect(() => {
+    if (
+      !timerDone ||
+      !monetagZoneId ||
+      sdkStatus !== 'verified' ||
+      ad.rewardVerificationMethod !== 'sdk_callback' ||
+      ad.adType === 'direct_link' ||
+      session.status !== 'pending' ||
+      verifiedTxId
+    ) {
+      return;
+    }
+    if (sdkVerifyRequestedRef.current === session.sessionId) return;
+    sdkVerifyRequestedRef.current = session.sessionId;
+    void confirmSdkAdSessionReward({
+      sessionId: session.sessionId,
+      adId: ad.adId,
+      sdkZoneId: monetagZoneId,
+      watchedSeconds: elapsedSec,
+      sdkVerified: true,
+    }).then((res) => {
+      if (res.ok) {
+        setVerifiedTxId(res.txId || session.sessionId);
+      } else {
+        setVerifyError(res.error || 'Server verification did not complete.');
+      }
+    });
+  }, [
+    timerDone,
+    monetagZoneId,
+    sdkStatus,
+    ad.rewardVerificationMethod,
+    ad.adType,
+    ad.adId,
+    session.status,
+    session.sessionId,
+    elapsedSec,
+    verifiedTxId,
+  ]);
+
+  const handleLaunchMonetag = async () => {
+    if (!monetagZoneId) return;
+    setSdkStatus('launching');
+    setSdkError('');
+    const outcome = await showMonetagRewardedAd(monetagZoneId, session.sessionId);
+    if (outcome.verified) {
+      setSdkStatus('verified');
+    } else {
+      setSdkStatus('failed');
+      setSdkError(outcome.error || 'Ad closed early or blocked. Zero points credited.');
+    }
+  };
+
+  const handleBack = async () => {
+    if (session.status === 'pending' && !verifiedTxId && !timerDone) {
+      await cancelPendingAdSession(session.sessionId, 'CLOSED_BEFORE_30_SECONDS');
+    }
+    onBackToAds();
+  };
+
   const renderVerificationStatus = () => {
-    if (session.status === 'completed') {
+    if (session.status === 'completed' || verifiedTxId) {
       return (
         <div className="p-4 rounded-2xl bg-emerald-500/15 border border-emerald-400/35 flex items-start gap-3">
           <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0 mt-0.5" />
@@ -49,7 +154,7 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
             <p className="text-xs text-slate-200 leading-relaxed">
               Partner callback verified by our server. Transaction ID:{' '}
               <span className="font-mono-num text-white font-semibold">
-                {session.transactionId || session.sessionId}
+                {session.transactionId || verifiedTxId || session.sessionId}
               </span>
             </p>
           </div>
@@ -57,7 +162,7 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
       );
     }
 
-    if (session.status === 'rejected') {
+    if (session.status === 'rejected' || verifyError || sdkError) {
       return (
         <div className="p-4 rounded-2xl bg-rose-500/15 border border-rose-400/35 flex items-start gap-3">
           <ShieldAlert className="w-6 h-6 text-rose-400 shrink-0 mt-0.5" />
@@ -65,6 +170,8 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
             <p className="text-sm font-extrabold text-rose-300">Verification Rejected</p>
             <p className="text-xs text-slate-200 leading-relaxed">
               {session.rejectionReason ||
+                verifyError ||
+                sdkError ||
                 'This ad session did not pass server-side verification or policy checks.'}
             </p>
           </div>
@@ -77,12 +184,14 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
         <Loader2 className="w-6 h-6 text-violet-300 animate-spin shrink-0 mt-0.5" />
         <div className="space-y-1">
           <p className="text-sm font-bold text-white">
-            Waiting for Server Verification ({formatVerificationMethodLabel(ad.rewardVerificationMethod)})
+            {timerDone
+              ? `Waiting for Server Verification (${formatVerificationMethodLabel(ad.rewardVerificationMethod)})`
+              : `30s Viewing Session Active — ${remainingSec}s remaining`}
           </p>
           <p className="text-xs text-slate-300 leading-relaxed">
             Session <span className="font-mono-num text-violet-300">{session.sessionId}</span> is
-            active. Points will be credited automatically as soon as {ad.adNetwork} confirms
-            completion via backend callback.
+            active. Points are credited only after {requiredDuration}s completion AND {ad.adNetwork}{' '}
+            callback verification.
           </p>
         </div>
       </div>
@@ -113,7 +222,7 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
         <div className="flex items-center gap-5 flex-wrap pt-3 border-t border-white/20 text-xs text-violet-100 tabular-nums">
           <span className="inline-flex items-center gap-1.5">
             <Clock className="w-4 h-4" />
-            Est. Duration: ~{ad.estimatedDuration} sec
+            Required Duration: {requiredDuration} sec ({remainingSec}s left)
           </span>
           <span>Verification: {formatVerificationMethodLabel(ad.rewardVerificationMethod)}</span>
           <span className="font-mono-num">Date (Dhaka): {session.dhakaDate}</span>
@@ -159,6 +268,20 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
               <ExternalLink className="w-4 h-4" />
             </a>
           )}
+
+          {monetagZoneId && (
+            <button
+              type="button"
+              onClick={() => void handleLaunchMonetag()}
+              disabled={sdkStatus === 'launching'}
+              className="w-full min-h-[46px] px-5 py-3 rounded-xl brand-button text-white text-sm font-bold inline-flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <Play className="w-4 h-4 fill-white" />
+              <span>
+                {sdkStatus === 'launching' ? 'Showing Monetag Ad...' : 'Launch Monetag Rewarded Ad'}
+              </span>
+            </button>
+          )}
         </div>
       </GlassCard>
 
@@ -182,7 +305,7 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
 
       <button
         type="button"
-        onClick={onBackToAds}
+        onClick={() => void handleBack()}
         className="w-full min-h-[48px] px-5 py-3 rounded-full bg-white/10 hover:bg-white/15 border border-white/15 text-white text-sm font-bold inline-flex items-center justify-center gap-2 transition-colors"
       >
         <ArrowLeft className="w-4 h-4" />
@@ -191,3 +314,4 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
     </div>
   );
 };
+

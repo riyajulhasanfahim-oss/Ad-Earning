@@ -574,6 +574,31 @@ export function subscribeToFraudLogs(
   );
 }
 
+export const MIN_AD_VIEW_SECONDS = 30;
+
+const AD_SESSION_ERROR_MESSAGES: Record<string, string> = {
+  EARNING_DISABLED: 'Ad earning is temporarily paused by the Administrator.',
+  USER_NOT_ACTIVE: 'Your account is not active and cannot watch ads.',
+  AD_NOT_FOUND: 'This advertisement is no longer available.',
+  AD_INACTIVE: 'This advertisement is currently inactive.',
+  AD_NOT_ELIGIBLE: 'This advertisement does not meet verification requirements.',
+  INCENTIVIZED_TRAFFIC_DISALLOWED:
+    'This Direct Link does not have Incentivized Traffic approval.',
+  GLOBAL_DAILY_LIMIT_REACHED:
+    "Today's global ad limit has been reached. Try again tomorrow (Asia/Dhaka).",
+  PER_AD_DAILY_LIMIT_REACHED:
+    'Daily limit for this advertisement has already been completed today.',
+  RATE_LIMIT_EXCEEDED: 'Please wait a few seconds before starting or completing another ad.',
+  ABNORMALLY_FAST_AD_COMPLETION:
+    'Full 30-second ad viewing session was not completed yet. Zero points awarded.',
+  S2S_POSTBACK_REQUIRED_FOR_DIRECT_LINK:
+    'Direct Link ads cannot be credited without verified Ad Network S2S postback.',
+  S2S_POSTBACK_REQUIRED:
+    'This ad requires verified Ad Network S2S postback confirmation.',
+  SDK_ZONE_MISMATCH: 'Ad zone mismatch detected. Reward rejected.',
+  SESSION_ALREADY_FINALIZED: 'This ad session has already been finalized.',
+};
+
 export async function initiateAdSession(
   user: UserProfile,
   ad: Advertisement,
@@ -583,15 +608,15 @@ export async function initiateAdSession(
   earningEnabled = true,
 ): Promise<AdSessionRecord> {
   if (!earningEnabled) {
-    throw new Error('Ad earning is temporarily paused by the Administrator.');
+    throw new Error(AD_SESSION_ERROR_MESSAGES.EARNING_DISABLED);
   }
 
   if (user.accountStatus !== 'active') {
-    throw new Error('Your account is not active and cannot watch ads.');
+    throw new Error(AD_SESSION_ERROR_MESSAGES.USER_NOT_ACTIVE);
   }
 
   if (ad.status !== 'active') {
-    throw new Error('This advertisement is currently inactive.');
+    throw new Error(AD_SESSION_ERROR_MESSAGES.AD_INACTIVE);
   }
 
   const policy = checkAdPolicyCompliance(ad);
@@ -624,6 +649,69 @@ export async function initiateAdSession(
     throw new Error(
       `Daily limit for ${ad.adName} (${ad.dailyLimit}/day) has already been completed today.`,
     );
+  }
+
+  // Prefer server-authoritative createAdSession Cloud Function first
+  const currentUser = auth.currentUser;
+  if (currentUser) {
+    try {
+      const [idToken, appCheckHeaders] = await Promise.all([
+        currentUser.getIdToken(),
+        getAppCheckTokenHeader(),
+      ]);
+      const endpoint = `https://us-central1-${firebaseConfig.projectId}.cloudfunctions.net/createAdSession`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+          ...appCheckHeaders,
+        },
+        body: JSON.stringify({ adId: ad.adId }),
+      });
+
+      if (response.status !== 404) {
+        const body = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          sessionId?: string;
+          dhakaDate?: string;
+          error?: string;
+        };
+        if (response.ok && body.ok && body.sessionId) {
+          return {
+            id: body.sessionId,
+            sessionId: body.sessionId,
+            userId: user.uid,
+            adId: ad.adId,
+            adName: ad.adName,
+            adNetwork: ad.adNetwork,
+            expectedRewardPoints: ad.rewardPoints,
+            dhakaDate: body.dhakaDate || todayDhaka,
+            status: 'pending',
+            transactionId: '',
+            rejectionReason: '',
+            createdAtLabel: 'Just now',
+            createdAtMillis: Date.now(),
+          };
+        }
+        const errCode = body.error || '';
+        throw new Error(
+          AD_SESSION_ERROR_MESSAGES[errCode] ||
+            errCode ||
+            'Could not start verified ad session.',
+        );
+      }
+    } catch (err) {
+      // Only fall back to Firestore rules-validated session creation if Cloud Function is unreachable (404 / network error)
+      if (
+        err instanceof Error &&
+        !err.message.includes('Failed to fetch') &&
+        !err.message.includes('NetworkError') &&
+        !err.message.includes('fetch')
+      ) {
+        throw err;
+      }
+    }
   }
 
   const randomSuffix =
@@ -666,6 +754,115 @@ export async function initiateAdSession(
     createdAtLabel: 'Just now',
     createdAtMillis: Date.now(),
   };
+}
+
+export async function confirmSdkAdSessionReward(params: {
+  sessionId: string;
+  adId: string;
+  sdkZoneId: string;
+  watchedSeconds: number;
+  sdkVerified: boolean;
+}): Promise<{ ok: boolean; rewardPoints?: number; txId?: string; error?: string }> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    return { ok: false, error: 'Authentication required.' };
+  }
+
+  const [idToken, appCheckHeaders] = await Promise.all([
+    currentUser.getIdToken(),
+    getAppCheckTokenHeader(),
+  ]);
+  const endpoint = `https://us-central1-${firebaseConfig.projectId}.cloudfunctions.net/confirmSdkAdCompletion`;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+        ...appCheckHeaders,
+      },
+      body: JSON.stringify(params),
+    });
+
+    if (response.status === 404) {
+      return {
+        ok: false,
+        error:
+          'Backend verification Cloud Function (confirmSdkAdCompletion) is not deployed yet. Deploy functions to credit verified SDK rewards.',
+      };
+    }
+
+    const body = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      rewardPoints?: number;
+      txId?: string;
+      error?: string;
+    };
+
+    if (!response.ok || !body.ok) {
+      const code = body.error || '';
+      return {
+        ok: false,
+        error:
+          AD_SESSION_ERROR_MESSAGES[code] ||
+          code ||
+          'Backend verification rejected this ad session.',
+      };
+    }
+
+    return {
+      ok: true,
+      rewardPoints: Number(body.rewardPoints || 0),
+      txId: body.txId || params.sessionId,
+    };
+  } catch {
+    return {
+      ok: false,
+      error:
+        'Unable to reach backend verification service. Zero points credited until server verification completes.',
+    };
+  }
+}
+
+export async function cancelPendingAdSession(
+  sessionId: string,
+  reason = 'CLOSED_BEFORE_30_SECONDS',
+): Promise<void> {
+  if (!sessionId) return;
+  const cleanReason = reason.trim().slice(0, 180) || 'CLOSED_BEFORE_30_SECONDS';
+  const currentUser = auth.currentUser;
+
+  if (currentUser) {
+    try {
+      const [idToken, appCheckHeaders] = await Promise.all([
+        currentUser.getIdToken(),
+        getAppCheckTokenHeader(),
+      ]);
+      const endpoint = `https://us-central1-${firebaseConfig.projectId}.cloudfunctions.net/cancelAdSession`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+          ...appCheckHeaders,
+        },
+        body: JSON.stringify({ sessionId, reason: cleanReason }),
+      });
+      if (response.ok) return;
+    } catch {
+      // Fallback to Firestore owner rejection rule below
+    }
+  }
+
+  try {
+    await updateDoc(doc(db, 'adSessions', sessionId), {
+      status: 'rejected',
+      rejectionReason: cleanReason,
+    });
+  } catch {
+    // Session may already be completed or finalized
+  }
 }
 
 export interface SaveAdvertisementInput {
@@ -712,7 +909,7 @@ export async function saveAdvertisement(input: SaveAdvertisementInput): Promise<
         placementOrUrl: input.placementOrUrl.trim(),
         rewardPoints: Number(input.rewardPoints),
         dailyLimit: Math.max(1, Number(input.dailyLimit)),
-        estimatedDuration: Math.max(1, Number(input.estimatedDuration)),
+        estimatedDuration: Math.max(MIN_AD_VIEW_SECONDS, Number(input.estimatedDuration || MIN_AD_VIEW_SECONDS)),
         startDate: input.startDate.trim(),
         endDate: input.endDate.trim(),
         status: input.status,
@@ -731,7 +928,7 @@ export async function saveAdvertisement(input: SaveAdvertisementInput): Promise<
         placementOrUrl: input.placementOrUrl.trim(),
         rewardPoints: Number(input.rewardPoints),
         dailyLimit: Math.max(1, Number(input.dailyLimit)),
-        estimatedDuration: Math.max(1, Number(input.estimatedDuration)),
+        estimatedDuration: Math.max(MIN_AD_VIEW_SECONDS, Number(input.estimatedDuration || MIN_AD_VIEW_SECONDS)),
         startDate: input.startDate.trim(),
         endDate: input.endDate.trim(),
         status: input.status,
@@ -744,6 +941,34 @@ export async function saveAdvertisement(input: SaveAdvertisementInput): Promise<
     }
   } catch (error) {
     handleFirestoreError(error, input.isNew ? OperationType.CREATE : OperationType.UPDATE, path);
+  }
+}
+
+export async function syncLinkedAdvertisementFields(
+  linkedAdId: string,
+  fields: {
+    placementOrUrl?: string;
+    status?: 'active' | 'inactive';
+  },
+): Promise<void> {
+  const cleanId = linkedAdId.trim();
+  if (!cleanId) return;
+  try {
+    const ref = doc(db, 'advertisements', cleanId);
+    const snap = await getDocFromServer(ref);
+    if (!snap.exists()) return;
+    const updates: Record<string, unknown> = {
+      updatedAt: serverTimestamp(),
+    };
+    if (typeof fields.placementOrUrl === 'string' && fields.placementOrUrl.trim()) {
+      updates.placementOrUrl = fields.placementOrUrl.trim();
+    }
+    if (fields.status === 'active' || fields.status === 'inactive') {
+      updates.status = fields.status;
+    }
+    await updateDoc(ref, updates);
+  } catch {
+    // Non-blocking sync if linked advertisement doc does not exist or rules disallow invalid state
   }
 }
 
