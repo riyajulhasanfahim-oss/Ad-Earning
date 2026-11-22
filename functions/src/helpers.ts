@@ -20,6 +20,19 @@ export const BOOTSTRAP_SUPER_ADMIN_EMAIL = 'riyajulhasanfahim@gmail.com';
 export const DEFAULT_GLOBAL_DAILY_AD_LIMIT = 20;
 export const MIN_SECONDS_BETWEEN_COMPLETIONS = 30;
 export const MIN_AD_VIEW_DURATION_SEC = 30;
+export const MAX_AD_VIEW_DURATION_SEC = 180;
+
+/**
+ * Normalizes ad viewing duration in seconds.
+ * Prevents accidental millisecond/oversized values (e.g. 3000s) or <30s values, defaulting to 30s.
+ */
+export function normalizeAdDurationSeconds(raw: unknown): number {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < MIN_AD_VIEW_DURATION_SEC || n > MAX_AD_VIEW_DURATION_SEC) {
+    return MIN_AD_VIEW_DURATION_SEC;
+  }
+  return n;
+}
 
 export const PAYMENT_FEES: Record<string, number> = {
   bkash: 2,

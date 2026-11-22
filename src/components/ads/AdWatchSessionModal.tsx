@@ -22,7 +22,7 @@ import { formatPoints } from '../../services/appService';
 import {
   cancelPendingAdSession,
   confirmSdkAdSessionReward,
-  MIN_AD_VIEW_SECONDS,
+  normalizeAdDurationSeconds,
 } from '../../services/dashboardService';
 import {
   extractMonetagZoneId,
@@ -48,10 +48,7 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
   onSuccessToast,
   onInfoToast,
 }) => {
-  const requiredDuration = Math.max(
-    MIN_AD_VIEW_SECONDS,
-    Number(ad.estimatedDuration || MIN_AD_VIEW_SECONDS),
-  );
+  const requiredDuration = normalizeAdDurationSeconds(ad.estimatedDuration);
 
   const [elapsedSec, setElapsedSec] = useState<number>(() =>
     Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000)),

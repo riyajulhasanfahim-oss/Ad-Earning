@@ -98,7 +98,7 @@ function mapAdvertisementDoc(id: string, data: Record<string, unknown>): Adverti
     placementOrUrl: String(data.placementOrUrl || ''),
     rewardPoints: Number(data.rewardPoints || 0),
     dailyLimit: Math.max(1, Number(data.dailyLimit || 1)),
-    estimatedDuration: Math.max(1, Number(data.estimatedDuration || 30)),
+    estimatedDuration: normalizeAdDurationSeconds(data.estimatedDuration),
     startDate: String(data.startDate || ''),
     endDate: String(data.endDate || ''),
     status: data.status === 'active' ? 'active' : 'inactive',
@@ -575,6 +575,19 @@ export function subscribeToFraudLogs(
 }
 
 export const MIN_AD_VIEW_SECONDS = 30;
+export const MAX_AD_VIEW_SECONDS = 180;
+
+/**
+ * Normalizes ad viewing duration in seconds.
+ * Converts invalid/oversized values (e.g. 3000s/ms) or <30s values cleanly to 30s.
+ */
+export function normalizeAdDurationSeconds(raw: unknown): number {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < MIN_AD_VIEW_SECONDS || n > MAX_AD_VIEW_SECONDS) {
+    return MIN_AD_VIEW_SECONDS;
+  }
+  return n;
+}
 
 const AD_SESSION_ERROR_MESSAGES: Record<string, string> = {
   EARNING_DISABLED: 'Ad earning is temporarily paused by the Administrator.',
@@ -909,7 +922,7 @@ export async function saveAdvertisement(input: SaveAdvertisementInput): Promise<
         placementOrUrl: input.placementOrUrl.trim(),
         rewardPoints: Number(input.rewardPoints),
         dailyLimit: Math.max(1, Number(input.dailyLimit)),
-        estimatedDuration: Math.max(MIN_AD_VIEW_SECONDS, Number(input.estimatedDuration || MIN_AD_VIEW_SECONDS)),
+        estimatedDuration: normalizeAdDurationSeconds(input.estimatedDuration),
         startDate: input.startDate.trim(),
         endDate: input.endDate.trim(),
         status: input.status,
@@ -928,7 +941,7 @@ export async function saveAdvertisement(input: SaveAdvertisementInput): Promise<
         placementOrUrl: input.placementOrUrl.trim(),
         rewardPoints: Number(input.rewardPoints),
         dailyLimit: Math.max(1, Number(input.dailyLimit)),
-        estimatedDuration: Math.max(MIN_AD_VIEW_SECONDS, Number(input.estimatedDuration || MIN_AD_VIEW_SECONDS)),
+        estimatedDuration: normalizeAdDurationSeconds(input.estimatedDuration),
         startDate: input.startDate.trim(),
         endDate: input.endDate.trim(),
         status: input.status,

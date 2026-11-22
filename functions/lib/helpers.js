@@ -33,7 +33,8 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.VALID_ACCOUNT_TYPES = exports.PAYMENT_FEES = exports.MIN_AD_VIEW_DURATION_SEC = exports.MIN_SECONDS_BETWEEN_COMPLETIONS = exports.DEFAULT_GLOBAL_DAILY_AD_LIMIT = exports.BOOTSTRAP_SUPER_ADMIN_EMAIL = exports.FieldValue = exports.adminAuth = exports.db = exports.FIRESTORE_DATABASE_ID = void 0;
+exports.VALID_ACCOUNT_TYPES = exports.PAYMENT_FEES = exports.MAX_AD_VIEW_DURATION_SEC = exports.MIN_AD_VIEW_DURATION_SEC = exports.MIN_SECONDS_BETWEEN_COMPLETIONS = exports.DEFAULT_GLOBAL_DAILY_AD_LIMIT = exports.BOOTSTRAP_SUPER_ADMIN_EMAIL = exports.FieldValue = exports.adminAuth = exports.db = exports.FIRESTORE_DATABASE_ID = void 0;
+exports.normalizeAdDurationSeconds = normalizeAdDurationSeconds;
 exports.hasMinimumRole = hasMinimumRole;
 exports.getDhakaDateKey = getDhakaDateKey;
 exports.getDhakaMonthKey = getDhakaMonthKey;
@@ -66,6 +67,18 @@ exports.BOOTSTRAP_SUPER_ADMIN_EMAIL = 'riyajulhasanfahim@gmail.com';
 exports.DEFAULT_GLOBAL_DAILY_AD_LIMIT = 20;
 exports.MIN_SECONDS_BETWEEN_COMPLETIONS = 30;
 exports.MIN_AD_VIEW_DURATION_SEC = 30;
+exports.MAX_AD_VIEW_DURATION_SEC = 180;
+/**
+ * Normalizes ad viewing duration in seconds.
+ * Prevents accidental millisecond/oversized values (e.g. 3000s) or <30s values, defaulting to 30s.
+ */
+function normalizeAdDurationSeconds(raw) {
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n) || n < exports.MIN_AD_VIEW_DURATION_SEC || n > exports.MAX_AD_VIEW_DURATION_SEC) {
+        return exports.MIN_AD_VIEW_DURATION_SEC;
+    }
+    return n;
+}
 exports.PAYMENT_FEES = {
     bkash: 2,
     nagad: 1.5,

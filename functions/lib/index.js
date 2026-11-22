@@ -401,7 +401,7 @@ async function executeVerifiedAdRewardTransaction(params) {
         if (!sessionCreatedAt || typeof sessionCreatedAt.toMillis !== 'function') {
             throw new Error('INVALID_SESSION_TIMESTAMP');
         }
-        const requiredDurationSec = Math.max(helpers_1.MIN_AD_VIEW_DURATION_SEC, Number(adData.estimatedDuration || helpers_1.MIN_AD_VIEW_DURATION_SEC));
+        const requiredDurationSec = (0, helpers_1.normalizeAdDurationSeconds)(adData.estimatedDuration);
         const elapsedSinceStartSec = (Date.now() - sessionCreatedAt.toMillis()) / 1000;
         if (elapsedSinceStartSec < requiredDurationSec) {
             throw new Error('ABNORMALLY_FAST_AD_COMPLETION');
@@ -609,7 +609,7 @@ exports.createAdSession = (0, https_1.onRequest)({ cors: true }, async (req, res
             res.status(429).json({ ok: false, error: 'PER_AD_DAILY_LIMIT_REACHED' });
             return;
         }
-        const requiredDurationSec = Math.max(helpers_1.MIN_AD_VIEW_DURATION_SEC, Number(adData.estimatedDuration || helpers_1.MIN_AD_VIEW_DURATION_SEC));
+        const requiredDurationSec = (0, helpers_1.normalizeAdDurationSeconds)(adData.estimatedDuration);
         await helpers_1.db.collection('adSessions').doc(sessionId).create({
             sessionId,
             userId: uid,
@@ -854,7 +854,7 @@ exports.confirmSdkAdCompletion = (0, https_1.onRequest)({ cors: true }, async (r
             res.status(403).json({ ok: false, error: 'SDK_ZONE_MISMATCH' });
             return;
         }
-        const requiredDurationSec = Math.max(helpers_1.MIN_AD_VIEW_DURATION_SEC, Number(adData.estimatedDuration || helpers_1.MIN_AD_VIEW_DURATION_SEC));
+        const requiredDurationSec = (0, helpers_1.normalizeAdDurationSeconds)(adData.estimatedDuration);
         const createdAt = sessionData.createdAt;
         const elapsedSec = createdAt && typeof createdAt.toMillis === 'function'
             ? (Date.now() - createdAt.toMillis()) / 1000
@@ -2600,7 +2600,7 @@ exports.manageAdvertisements = (0, https_1.onRequest)({ cors: true }, async (req
             placementOrUrl: String(body.placementOrUrl || '').trim().slice(0, 500),
             rewardPoints: Math.max(0, Number(body.rewardPoints || 0)),
             dailyLimit: Math.max(1, Math.floor(Number(body.dailyLimit || 1))),
-            estimatedDuration: Math.max(1, Math.floor(Number(body.estimatedDuration || 30))),
+            estimatedDuration: (0, helpers_1.normalizeAdDurationSeconds)(body.estimatedDuration),
             startDate: String(body.startDate || '').trim().slice(0, 20),
             endDate: String(body.endDate || '').trim().slice(0, 20),
             status,
@@ -3010,7 +3010,7 @@ exports.manageAdCampaign = (0, https_1.onRequest)({ cors: true }, async (req, re
             rewardPoints: rewardEligible ? requestedPoints : 0,
             dailyUserLimit: Math.max(1, Math.floor(Number(body.dailyUserLimit || 1))),
             globalDailyLimit: Math.max(1, Math.floor(Number(body.globalDailyLimit || 100))),
-            estimatedDuration: Math.max(1, Math.floor(Number(body.estimatedDuration || 20))),
+            estimatedDuration: (0, helpers_1.normalizeAdDurationSeconds)(body.estimatedDuration),
             startDate: String(body.startDate || '').trim().slice(0, 20),
             endDate: String(body.endDate || '').trim().slice(0, 20),
             targetCountries: String(body.targetCountries || 'ALL').trim().slice(0, 120),

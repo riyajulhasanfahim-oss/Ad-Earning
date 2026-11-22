@@ -451,12 +451,14 @@ function runAllBackendSecurityTests(): void {
   // Test 19: 30s Minimum Viewing Session, SDK Verification & Direct-Link Timer Guard
   assert.match(FUNCTIONS_HELPERS, /MIN_AD_VIEW_DURATION_SEC = 30/);
   assert.match(FUNCTIONS_HELPERS, /MIN_SECONDS_BETWEEN_COMPLETIONS = 30/);
+  assert.match(FUNCTIONS_HELPERS, /function normalizeAdDurationSeconds/);
+  assert.match(FUNCTIONS_INDEX, /normalizeAdDurationSeconds\(adData\.estimatedDuration\)/);
   assert.match(FUNCTIONS_INDEX, /S2S_POSTBACK_REQUIRED_FOR_DIRECT_LINK/);
   assert.match(FUNCTIONS_INDEX, /elapsedSinceStartSec < requiredDurationSec/);
   const adSessionsBlock = extractCollectionBlock('adSessions');
   assert.match(adSessionsBlock, /incoming\(\)\.status == 'rejected'/);
   assert.match(adSessionsBlock, /incoming\(\)\.transactionId == ''/);
-  results.push('Test 19 PASSED: 30s backend duration, direct-link SDK block & owner-reject-only adSessions rules verified');
+  results.push('Test 19 PASSED: 30s backend duration, 3000s guard, direct-link SDK block & owner-reject-only adSessions rules verified');
 
   for (const line of results) {
     console.log(line);

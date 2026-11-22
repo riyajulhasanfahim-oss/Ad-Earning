@@ -22,6 +22,7 @@ import {
   maskPublicUsername,
   MIN_AD_VIEW_DURATION_SEC,
   MIN_SECONDS_BETWEEN_COMPLETIONS,
+  normalizeAdDurationSeconds,
   PAYMENT_FEES,
   readActiveAppSettings,
   sanitizeId,
@@ -497,10 +498,7 @@ async function executeVerifiedAdRewardTransaction(params: {
     if (!sessionCreatedAt || typeof sessionCreatedAt.toMillis !== 'function') {
       throw new Error('INVALID_SESSION_TIMESTAMP');
     }
-    const requiredDurationSec = Math.max(
-      MIN_AD_VIEW_DURATION_SEC,
-      Number(adData.estimatedDuration || MIN_AD_VIEW_DURATION_SEC),
-    );
+    const requiredDurationSec = normalizeAdDurationSeconds(adData.estimatedDuration);
     const elapsedSinceStartSec = (Date.now() - sessionCreatedAt.toMillis()) / 1000;
     if (elapsedSinceStartSec < requiredDurationSec) {
       throw new Error('ABNORMALLY_FAST_AD_COMPLETION');
@@ -739,10 +737,7 @@ export const createAdSession = onRequest({ cors: true }, async (req, res) => {
       return;
     }
 
-    const requiredDurationSec = Math.max(
-      MIN_AD_VIEW_DURATION_SEC,
-      Number(adData.estimatedDuration || MIN_AD_VIEW_DURATION_SEC),
-    );
+    const requiredDurationSec = normalizeAdDurationSeconds(adData.estimatedDuration);
 
     await db.collection('adSessions').doc(sessionId).create({
       sessionId,
@@ -1030,10 +1025,7 @@ export const confirmSdkAdCompletion = onRequest({ cors: true }, async (req, res)
       return;
     }
 
-    const requiredDurationSec = Math.max(
-      MIN_AD_VIEW_DURATION_SEC,
-      Number(adData.estimatedDuration || MIN_AD_VIEW_DURATION_SEC),
-    );
+    const requiredDurationSec = normalizeAdDurationSeconds(adData.estimatedDuration);
     const createdAt = sessionData.createdAt;
     const elapsedSec =
       createdAt && typeof createdAt.toMillis === 'function'
@@ -3060,7 +3052,7 @@ export const manageAdvertisements = onRequest({ cors: true }, async (req, res) =
         placementOrUrl: String(body.placementOrUrl || '').trim().slice(0, 500),
         rewardPoints: Math.max(0, Number(body.rewardPoints || 0)),
         dailyLimit: Math.max(1, Math.floor(Number(body.dailyLimit || 1))),
-        estimatedDuration: Math.max(1, Math.floor(Number(body.estimatedDuration || 30))),
+        estimatedDuration: normalizeAdDurationSeconds(body.estimatedDuration),
         startDate: String(body.startDate || '').trim().slice(0, 20),
         endDate: String(body.endDate || '').trim().slice(0, 20),
         status,
@@ -3529,7 +3521,7 @@ export const manageAdCampaign = onRequest({ cors: true }, async (req, res) => {
         rewardPoints: rewardEligible ? requestedPoints : 0,
         dailyUserLimit: Math.max(1, Math.floor(Number(body.dailyUserLimit || 1))),
         globalDailyLimit: Math.max(1, Math.floor(Number(body.globalDailyLimit || 100))),
-        estimatedDuration: Math.max(1, Math.floor(Number(body.estimatedDuration || 20))),
+        estimatedDuration: normalizeAdDurationSeconds(body.estimatedDuration),
         startDate: String(body.startDate || '').trim().slice(0, 20),
         endDate: String(body.endDate || '').trim().slice(0, 20),
         targetCountries: String(body.targetCountries || 'ALL').trim().slice(0, 120),

@@ -27,6 +27,7 @@ import {
 import { getDhakaDateKey } from '../../services/appService';
 import {
   deleteAdvertisement,
+  normalizeAdDurationSeconds,
   saveAdvertisement,
   saveEconomyConfig,
   toggleAdvertisementStatus,
@@ -134,7 +135,7 @@ export const AdminAdManagerModal: React.FC<AdminAdManagerModalProps> = ({
       placementOrUrl: ad.placementOrUrl,
       rewardPoints: String(ad.rewardPoints),
       dailyLimit: String(ad.dailyLimit),
-      estimatedDuration: String(ad.estimatedDuration),
+      estimatedDuration: String(normalizeAdDurationSeconds(ad.estimatedDuration)),
       startDate: ad.startDate,
       endDate: ad.endDate,
       status: ad.status,
@@ -167,7 +168,7 @@ export const AdminAdManagerModal: React.FC<AdminAdManagerModalProps> = ({
         placementOrUrl: form.placementOrUrl,
         rewardPoints: Math.max(0, Number(form.rewardPoints) || 0),
         dailyLimit: Math.max(1, Number(form.dailyLimit) || 1),
-        estimatedDuration: Math.max(1, Number(form.estimatedDuration) || 30),
+        estimatedDuration: normalizeAdDurationSeconds(form.estimatedDuration),
         startDate: form.startDate,
         endDate: form.endDate,
         status: form.status,
@@ -514,11 +515,12 @@ export const AdminAdManagerModal: React.FC<AdminAdManagerModalProps> = ({
 
               <div>
                 <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                  Estimated Duration (Seconds)
+                  Estimated Duration (30–180 Seconds)
                 </label>
                 <input
                   type="number"
-                  min={5}
+                  min={30}
+                  max={180}
                   required
                   value={form.estimatedDuration}
                   onChange={(e) => setForm({ ...form, estimatedDuration: e.target.value })}

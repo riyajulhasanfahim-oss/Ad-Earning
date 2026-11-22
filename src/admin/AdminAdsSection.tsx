@@ -28,6 +28,7 @@ import {
 import { formatPoints } from '../services/appService';
 import {
   deleteAdvertisement,
+  normalizeAdDurationSeconds,
   saveAdvertisement,
   toggleAdvertisementStatus,
 } from '../services/dashboardService';
@@ -138,7 +139,7 @@ export const AdminAdsSection: React.FC<AdminAdsSectionProps> = ({
       placementOrUrl: ad.placementOrUrl,
       rewardPoints: String(ad.rewardPoints),
       dailyLimit: String(ad.dailyLimit),
-      estimatedDuration: String(ad.estimatedDuration),
+      estimatedDuration: String(normalizeAdDurationSeconds(ad.estimatedDuration)),
       startDate: ad.startDate,
       endDate: ad.endDate,
       status: ad.status,
@@ -183,7 +184,7 @@ export const AdminAdsSection: React.FC<AdminAdsSectionProps> = ({
         placementOrUrl: form.placementOrUrl,
         rewardPoints: Math.floor(rewardPts),
         dailyLimit: Math.max(1, Math.floor(Number(form.dailyLimit || 5))),
-        estimatedDuration: Math.max(30, Math.floor(Number(form.estimatedDuration || 30))),
+        estimatedDuration: normalizeAdDurationSeconds(form.estimatedDuration),
         startDate: form.startDate,
         endDate: form.endDate,
         status: form.status,
@@ -558,10 +559,11 @@ export const AdminAdsSection: React.FC<AdminAdsSectionProps> = ({
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-300">Duration (min 30s)</label>
+                  <label className="font-semibold text-slate-300">Duration (30–180s)</label>
                   <input
                     type="number"
                     min={30}
+                    max={180}
                     value={form.estimatedDuration}
                     onChange={(e) => setForm({ ...form, estimatedDuration: e.target.value })}
                     className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num"

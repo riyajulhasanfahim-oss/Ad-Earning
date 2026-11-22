@@ -21,7 +21,7 @@ import { formatPoints } from '../services/appService';
 import {
   cancelPendingAdSession,
   confirmSdkAdSessionReward,
-  MIN_AD_VIEW_SECONDS,
+  normalizeAdDurationSeconds,
 } from '../services/dashboardService';
 import {
   extractMonetagZoneId,
@@ -41,10 +41,7 @@ export const AdWatchSessionPage: React.FC<AdWatchSessionPageProps> = ({
   onBackToAds,
 }) => {
   const adapter = getAdNetworkAdapter(ad.adNetwork);
-  const requiredDuration = Math.max(
-    MIN_AD_VIEW_SECONDS,
-    Number(ad.estimatedDuration || MIN_AD_VIEW_SECONDS),
-  );
+  const requiredDuration = normalizeAdDurationSeconds(ad.estimatedDuration);
   const startedAtMs = useMemo(
     () => (session.createdAtMillis > 0 ? session.createdAtMillis : Date.now()),
     [session.createdAtMillis],

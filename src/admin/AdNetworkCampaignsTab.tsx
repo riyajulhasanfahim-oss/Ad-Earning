@@ -22,6 +22,7 @@ import { hasAdminPermission } from '../services/adminService';
 import { deleteAdCampaignRecord, saveAdCampaignRecord } from '../services/adNetworkService';
 import {
   deleteAdvertisement,
+  normalizeAdDurationSeconds,
   saveAdvertisement,
   syncLinkedAdvertisementFields,
 } from '../services/dashboardService';
@@ -125,7 +126,7 @@ export const AdNetworkCampaignsTab: React.FC<AdNetworkCampaignsTabProps> = ({
       rewardPoints: String(c.rewardPoints),
       dailyUserLimit: String(c.dailyUserLimit),
       globalDailyLimit: String(c.globalDailyLimit),
-      estimatedDuration: String(c.estimatedDuration),
+      estimatedDuration: String(normalizeAdDurationSeconds(c.estimatedDuration)),
       startDate: c.startDate,
       endDate: c.endDate,
       targetCountries: c.targetCountries,
@@ -184,7 +185,7 @@ export const AdNetworkCampaignsTab: React.FC<AdNetworkCampaignsTabProps> = ({
         rewardPoints: eligible ? rewardPts : 0,
         dailyUserLimit: userLimit,
         globalDailyLimit: globalLimit,
-        estimatedDuration: Math.max(30, Math.floor(Number(form.estimatedDuration || 30))),
+        estimatedDuration: normalizeAdDurationSeconds(form.estimatedDuration),
         startDate: form.startDate,
         endDate: form.endDate,
         targetCountries: form.targetCountries,
@@ -205,7 +206,7 @@ export const AdNetworkCampaignsTab: React.FC<AdNetworkCampaignsTabProps> = ({
           placementOrUrl: placement?.destinationUrl || placement?.zoneOrPlacementCode || net?.placementId || '',
           rewardPoints: rewardPts,
           dailyLimit: userLimit,
-          estimatedDuration: Math.max(30, Math.floor(Number(form.estimatedDuration || 30))),
+          estimatedDuration: normalizeAdDurationSeconds(form.estimatedDuration),
           startDate: form.startDate,
           endDate: form.endDate,
           status: form.status,
@@ -241,7 +242,7 @@ export const AdNetworkCampaignsTab: React.FC<AdNetworkCampaignsTabProps> = ({
         rewardPoints: c.rewardPoints,
         dailyUserLimit: c.dailyUserLimit,
         globalDailyLimit: c.globalDailyLimit,
-        estimatedDuration: c.estimatedDuration,
+        estimatedDuration: normalizeAdDurationSeconds(c.estimatedDuration),
         startDate: c.startDate,
         endDate: c.endDate,
         targetCountries: c.targetCountries,
@@ -534,10 +535,11 @@ export const AdNetworkCampaignsTab: React.FC<AdNetworkCampaignsTabProps> = ({
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="font-semibold text-slate-300">Duration (min 30s)</label>
+                  <label className="font-semibold text-slate-300">Duration (30–180s)</label>
                   <input
                     type="number"
                     min={30}
+                    max={180}
                     value={form.estimatedDuration}
                     onChange={(e) => setForm({ ...form, estimatedDuration: e.target.value })}
                     className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num"

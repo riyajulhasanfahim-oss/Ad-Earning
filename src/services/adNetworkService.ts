@@ -32,6 +32,7 @@ import {
 } from '../types';
 import { formatDhakaDateTime } from './appService';
 import { recordAdminAuditLogClient } from './adminService';
+import { normalizeAdDurationSeconds } from './dashboardService';
 
 function formatTs(ts: unknown): { label: string; millis: number } {
   if (ts instanceof Timestamp) {
@@ -253,7 +254,7 @@ export function subscribeToAdCampaigns(
           globalDailyLimit: Number(data.globalDailyLimit || 100),
           globalCompletedToday: Number(data.globalCompletedToday || 0),
           globalCompletedDhakaDate: String(data.globalCompletedDhakaDate || ''),
-          estimatedDuration: Number(data.estimatedDuration || 20),
+          estimatedDuration: normalizeAdDurationSeconds(data.estimatedDuration),
           startDate: String(data.startDate || ''),
           endDate: String(data.endDate || ''),
           targetCountries: String(data.targetCountries || 'ALL'),
@@ -920,7 +921,7 @@ export async function saveAdCampaignRecord(params: {
         rewardPoints: effectiveRewardPoints,
         dailyUserLimit: Math.max(1, Math.floor(params.dailyUserLimit)),
         globalDailyLimit: Math.max(1, Math.floor(params.globalDailyLimit)),
-        estimatedDuration: Math.max(1, Math.floor(params.estimatedDuration)),
+        estimatedDuration: normalizeAdDurationSeconds(params.estimatedDuration),
         startDate: params.startDate.trim().slice(0, 20),
         endDate: params.endDate.trim().slice(0, 20),
         targetCountries: params.targetCountries.trim().slice(0, 120) || 'ALL',
