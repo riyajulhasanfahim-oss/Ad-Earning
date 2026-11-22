@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  Check,
   Coins,
+  Copy,
   Database,
   Download,
+  Gift,
   Globe,
   KeyRound,
   Loader2,
@@ -14,6 +17,7 @@ import {
 import {
   AdminMarkerRecord,
   AdminRole,
+  DailyBonusAdConfig,
   EconomyConfig,
   PaymentMethodConfig,
   PaymentMethodId,
@@ -22,10 +26,15 @@ import {
   WithdrawalSettingsConfig,
 } from '../types';
 import {
+  getDefaultDailyBonusAdConfig,
+  normalizeAdDurationSeconds,
+  saveDailyBonusAdConfig,
   saveEconomyConfig,
   savePaymentMethodConfig,
   saveWithdrawalSettingsConfig,
+  subscribeToDailyBonusAdConfig,
 } from '../services/dashboardService';
+import { getCanonicalCallbackUrl } from '../services/adNetworkService';
 import {
   assignAdminRoleViaCloudFunction,
   exportDatabaseBackupWithFallback,
@@ -47,7 +56,7 @@ interface AdminSettingsSectionProps {
   adminUser: { uid: string; email: string };
 }
 
-type SettingsTab = 'website' | 'economy' | 'withdrawals' | 'roles';
+type SettingsTab = 'website' | 'economy' | 'daily_bonus' | 'withdrawals' | 'roles';
 
 const PERMISSION_MATRIX: Array<{
   capability: string;
@@ -126,6 +135,38 @@ export const AdminSettingsSection: React.FC<AdminSettingsSectionProps> = ({
   const [targetRole, setTargetRole] = useState<AdminRole | 'revoke'>('admin');
   const [assigningRole, setAssigningRole] = useState(false);
   const [exportingBackup, setExportingBackup] = useState(false);
+
+  // Daily Check-in Bonus Monetag Direct Link state
+  const [dailyBonusCfg, setDailyBonusCfg] = useState<DailyBonusAdConfig>(() =>
+    getDefaultDailyBonusAdConfig(),
+  );
+  const [dbUrl, setDbUrl] = useState('');
+  const [dbPoints, setDbPoints] = useState(
+    economy.dailyBonusPoints !== null ? String(economy.dailyBonusPoints) : '25',
+  );
+  const [dbDuration, setDbDuration] = useState('30');
+  const [dbIncentivized, setDbIncentivized] = useState(false);
+  const [dbEnabled, setDbEnabled] = useState(false);
+  const [savingDailyBonus, setSavingDailyBonus] = useState(false);
+  const [copiedBonusPostback, setCopiedBonusPostback] = useState(false);
+
+  useEffect(() => {
+    const unsub = subscribeToDailyBonusAdConfig((cfg) => {
+      setDailyBonusCfg(cfg);
+      setDbUrl(cfg.monetagDirectLinkUrl);
+      setDbPoints(
+        cfg.rewardPoints !== null
+          ? String(cfg.rewardPoints)
+          : economy.dailyBonusPoints !== null
+            ? String(economy.dailyBonusPoints)
+            : '25',
+      );
+      setDbDuration(String(cfg.durationSeconds || 30));
+      setDbIncentivized(cfg.incentivizedTrafficAllowed);
+      setDbEnabled(cfg.enabled);
+    });
+    return () => unsub();
+  }, [economy.dailyBonusPoints]);
 
   useEffect(() => {
     setSiteForm(siteSettings);
@@ -223,6 +264,44 @@ export const AdminSettingsSection: React.FC<AdminSettingsSectionProps> = ({
       showToast(err instanceof Error ? err.message : 'Failed to save economy settings.', 'error');
     } finally {
       setSavingEconomy(false);
+    }
+  };
+
+  const handleSaveDailyBonusAd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canManageEconomy) return;
+    setSavingDailyBonus(true);
+    try {
+      const nextPoints = dbPoints.trim() ? Math.floor(Number(dbPoints)) : null;
+      const nextDuration = normalizeAdDurationSeconds(dbDuration);
+
+      const res = await saveDailyBonusAdConfig({
+        enabled: dbEnabled,
+        monetagDirectLinkUrl: dbUrl.trim(),
+        rewardPoints: nextPoints,
+        durationSeconds: nextDuration,
+        incentivizedTrafficAllowed: dbIncentivized,
+      });
+
+      if (!res.usedCloudFunction) {
+        await recordAdminAuditLogClient({
+          adminUser: { uid: adminUser.uid, email: adminUser.email, role: adminRole },
+          action: 'daily_bonus_settings_updated',
+          targetId: 'dailyBonus',
+          previousValue: `enabled=${dailyBonusCfg.enabled}, pts=${dailyBonusCfg.rewardPoints ?? 0}`,
+          newValue: `enabled=${dbEnabled}, pts=${nextPoints ?? 0}, sec=${nextDuration}`,
+          details: `Updated Daily Check-in Bonus Monetag Direct Link (enabled=${dbEnabled}, pts=${nextPoints ?? 0}, duration=${nextDuration}s)`,
+        });
+      }
+
+      showToast('Daily Check-in Bonus Monetag Direct Link saved.', 'success');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Failed to save Daily Check-in Bonus settings.',
+        'error',
+      );
+    } finally {
+      setSavingDailyBonus(false);
     }
   };
 
@@ -343,6 +422,7 @@ export const AdminSettingsSection: React.FC<AdminSettingsSectionProps> = ({
         {[
           { key: 'website' as SettingsTab, label: 'Website & Maintenance', icon: Globe },
           { key: 'economy' as SettingsTab, label: 'Economy & Ads', icon: Coins },
+          { key: 'daily_bonus' as SettingsTab, label: 'Daily Bonus Ad', icon: Gift },
           { key: 'withdrawals' as SettingsTab, label: 'Withdrawals & Methods', icon: Wallet },
           { key: 'roles' as SettingsTab, label: 'Admin Roles & Backup', icon: KeyRound },
         ].map((t) => {
@@ -571,6 +651,178 @@ export const AdminSettingsSection: React.FC<AdminSettingsSectionProps> = ({
               <Save className="w-4 h-4" />
             )}
             <span>Save Economy Settings</span>
+          </button>
+        </form>
+      )}
+
+      {/* Tab 2b: Daily Check-in Bonus — Monetag Direct Link Settings */}
+      {tab === 'daily_bonus' && (
+        <form
+          onSubmit={handleSaveDailyBonusAd}
+          className="rounded-2xl bg-[#0D1330] border border-white/10 p-5 space-y-4 text-xs"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold font-display text-white">
+                Daily Check-in Bonus — Monetag Direct Link
+              </h3>
+              <p className="text-slate-400 mt-0.5">
+                Configure the Monetag Direct Link opened when users click{' '}
+                <strong className="text-white">Claim Bonus</strong>. Points credit automatically
+                only after 30s viewing completion AND verified Monetag S2S Postback.
+              </p>
+            </div>
+            <span
+              className={`px-2.5 py-1 rounded-full text-[11px] font-bold shrink-0 border ${
+                dbEnabled
+                  ? 'bg-emerald-500/15 border-emerald-400/35 text-emerald-300'
+                  : 'bg-slate-500/15 border-white/15 text-slate-300'
+              }`}
+            >
+              {dbEnabled ? 'Active' : 'Inactive'}
+            </span>
+          </div>
+
+          {!canManageEconomy && (
+            <div className="rounded-xl bg-amber-500/10 border border-amber-400/30 p-3 text-amber-200">
+              Read-only tier: Updating Daily Bonus Ad settings requires Admin or Super Admin role.
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1 sm:col-span-2">
+              <label className="font-semibold text-slate-300">
+                Monetag Direct Link URL (HTTPS)
+              </label>
+              <input
+                type="url"
+                disabled={!canManageEconomy}
+                value={dbUrl}
+                onChange={(e) => setDbUrl(e.target.value)}
+                placeholder="https://your-monetag-direct-link.example/...?ymid={ymid}&subid={subid}"
+                className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num disabled:opacity-50"
+              />
+              <p className="text-[11px] text-slate-400">
+                Our server automatically appends <span className="font-mono-num">ymid</span>,{' '}
+                <span className="font-mono-num">session_id</span>, and{' '}
+                <span className="font-mono-num">subid</span> for S2S verification.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-semibold text-slate-300">Daily Bonus Reward Points</label>
+              <input
+                type="number"
+                min={1}
+                disabled={!canManageEconomy}
+                value={dbPoints}
+                onChange={(e) => setDbPoints(e.target.value)}
+                placeholder="e.g. 25"
+                className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num disabled:opacity-50"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-semibold text-slate-300">
+                Advertisement Duration (Seconds, 30–180s)
+              </label>
+              <input
+                type="number"
+                min={30}
+                max={180}
+                disabled={!canManageEconomy}
+                value={dbDuration}
+                onChange={(e) => setDbDuration(e.target.value)}
+                className="w-full h-10 px-3 rounded-xl bg-[#070B22] border border-white/15 text-white font-mono-num disabled:opacity-50"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            <label className="flex items-start gap-3 p-3.5 rounded-xl bg-[#070B22] border border-white/10 cursor-pointer">
+              <input
+                type="checkbox"
+                disabled={!canManageEconomy}
+                checked={dbIncentivized}
+                onChange={(e) => setDbIncentivized(e.target.checked)}
+                className="w-4 h-4 mt-0.5 rounded accent-emerald-500"
+              />
+              <div>
+                <p className="font-bold text-white">Monetag Incentivized Traffic Approved</p>
+                <p className="text-[11px] text-slate-400">
+                  Required before enabling Daily Bonus Direct Link rewards.
+                </p>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-3 p-3.5 rounded-xl bg-[#070B22] border border-white/10 cursor-pointer">
+              <input
+                type="checkbox"
+                disabled={!canManageEconomy}
+                checked={dbEnabled}
+                onChange={(e) => setDbEnabled(e.target.checked)}
+                className="w-4 h-4 mt-0.5 rounded accent-violet-600"
+              />
+              <div>
+                <p className="font-bold text-white">Enable Daily Check-in Bonus Ad</p>
+                <p className="text-[11px] text-slate-400">
+                  Toggle Active / Inactive status for users claiming Daily Bonus.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          {/* Monetag S2S Postback URL Copy Box */}
+          <div className="rounded-xl bg-[#070B22] border border-cyan-400/25 p-3.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-bold text-cyan-200">
+                Monetag S2S Postback URL (Set in Monetag Dashboard)
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  const url = getCanonicalCallbackUrl('monetag');
+                  void navigator.clipboard.writeText(url).then(() => {
+                    setCopiedBonusPostback(true);
+                    window.setTimeout(() => setCopiedBonusPostback(false), 1800);
+                  });
+                }}
+                className="min-h-[30px] px-2.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/35 text-cyan-200 font-semibold inline-flex items-center gap-1"
+              >
+                {copiedBonusPostback ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-300" />
+                    <span>Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copy URL</span>
+                  </>
+                )}
+              </button>
+            </div>
+            <p className="font-mono-num text-[11px] text-slate-300 break-all">
+              {getCanonicalCallbackUrl('monetag')}
+            </p>
+            <p className="text-[11px] text-slate-400">
+              Also configure your Monetag Callback Secret inside{' '}
+              <strong className="text-slate-200">Ad Networks → Monetag</strong> so callbacks
+              authenticate securely.
+            </p>
+          </div>
+
+          <button
+            type="submit"
+            disabled={!canManageEconomy || savingDailyBonus}
+            className="min-h-[42px] px-5 rounded-xl brand-button text-white font-bold inline-flex items-center gap-2 disabled:opacity-50"
+          >
+            {savingDailyBonus ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
+            <span>Save &amp; Update Daily Bonus Ad</span>
           </button>
         </form>
       )}

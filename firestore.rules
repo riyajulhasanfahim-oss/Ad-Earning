@@ -147,6 +147,31 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    function isValidDailyBonusSettings(data) {
+      return data.keys().hasAll([
+          'enabled', 'monetagDirectLinkUrl', 'durationSeconds',
+          'incentivizedTrafficAllowed', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'enabled', 'monetagDirectLinkUrl', 'rewardPoints', 'durationSeconds',
+          'incentivizedTrafficAllowed', 'updatedAt'
+        ]) &&
+        data.enabled is bool &&
+        data.monetagDirectLinkUrl is string && data.monetagDirectLinkUrl.size() <= 1000 &&
+        (!('rewardPoints' in data) || data.rewardPoints == null || (data.rewardPoints is number && data.rewardPoints >= 1)) &&
+        data.durationSeconds is number && data.durationSeconds >= 30 && data.durationSeconds <= 180 &&
+        data.incentivizedTrafficAllowed is bool &&
+        (
+          !data.enabled ||
+          (
+            data.monetagDirectLinkUrl.matches('^https://.*') &&
+            ('rewardPoints' in data) && data.rewardPoints is number && data.rewardPoints >= 1 &&
+            data.incentivizedTrafficAllowed == true
+          )
+        ) &&
+        data.updatedAt is timestamp;
+    }
+
     function isValidAdminNotificationReadState(data) {
       return data.keys().hasAll(['adminUid', 'readIds', 'updatedAt']) &&
         data.keys().hasOnly(['adminUid', 'readIds', 'updatedAt']) &&
@@ -739,15 +764,17 @@ service cloud.firestore {
 
     // 5. Admin-Controlled App & Site Settings
     match /appSettings/{settingId} {
-      allow get: if isValidId(settingId) && (settingId == 'site' || (isSignedIn() && (settingId == 'wallet' || isSupportAdmin())));
+      allow get: if isValidId(settingId) && (settingId == 'site' || (isSignedIn() && (settingId == 'wallet' || settingId == 'dailyBonus' || isSupportAdmin())));
       allow list: if isSupportAdmin();
       allow create: if isValidId(settingId) && incoming().updatedAt == request.time && (
         (settingId == 'site' && isSuperAdmin() && isValidSiteSettings(incoming())) ||
-        (settingId != 'site' && isAdmin() && isValidAppSettings(incoming()))
+        (settingId == 'dailyBonus' && isAdmin() && isValidDailyBonusSettings(incoming())) ||
+        (settingId != 'site' && settingId != 'dailyBonus' && isAdmin() && isValidAppSettings(incoming()))
       );
       allow update: if isValidId(settingId) && incoming().updatedAt == request.time && (
         (settingId == 'site' && isSuperAdmin() && isValidSiteSettings(incoming())) ||
-        (settingId != 'site' && isAdmin() && isValidAppSettings(incoming()))
+        (settingId == 'dailyBonus' && isAdmin() && isValidDailyBonusSettings(incoming())) ||
+        (settingId != 'site' && settingId != 'dailyBonus' && isAdmin() && isValidAppSettings(incoming()))
       );
       allow delete: if isValidId(settingId) && isSuperAdmin();
     }

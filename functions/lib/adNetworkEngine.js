@@ -190,6 +190,19 @@ async function processVerifiedNetworkCallback(ctx) {
         });
         return { httpStatus: 403, body: { ok: false, error: 'APPLIXIR_STATUS_NOT_COMPLETED' } };
     }
+    // 0b. Monetag reward_event_type check (never reward not_valued events)
+    const monetagEventLower = (ctx.monetagParams?.rewardEventType || '').trim().toLowerCase();
+    if (monetagEventLower &&
+        ['not_valued', 'not-valued', 'rejected', 'failed', '0', 'false'].includes(monetagEventLower)) {
+        await writeAdNetworkLog({
+            networkId: analyticsNetId,
+            eventType: 'callback_monetag_not_valued',
+            severity: 'warning',
+            status: 'rejected',
+            details: `Rejected Monetag callback reward_event_type="${monetagEventLower}" for session=${ctx.sessionId}`,
+        });
+        return { httpStatus: 403, body: { ok: false, error: 'MONETAG_EVENT_NOT_VALUED' } };
+    }
     // 1. Validate Signature / Secret
     const payloadToSign = `${ctx.sessionId}:${ctx.userId}:${ctx.providerTxId}`;
     const payloadWithTs = ctx.rawTimestamp !== undefined && ctx.rawTimestamp !== ''
@@ -499,6 +512,7 @@ async function processVerifiedNetworkCallback(ctx) {
         if (code === 'USER_NOT_ACTIVE' ||
             code === 'GLOBAL_DAILY_LIMIT_REACHED' ||
             code === 'PER_AD_DAILY_LIMIT_REACHED' ||
+            code === 'DAILY_BONUS_ALREADY_CLAIMED' ||
             code === 'RATE_LIMIT_EXCEEDED' ||
             code === 'INCENTIVIZED_TRAFFIC_DISALLOWED') {
             await helpers_1.db

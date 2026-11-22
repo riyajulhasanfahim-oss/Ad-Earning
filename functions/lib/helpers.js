@@ -33,10 +33,11 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.VALID_ACCOUNT_TYPES = exports.PAYMENT_FEES = exports.MAX_AD_VIEW_DURATION_SEC = exports.MIN_AD_VIEW_DURATION_SEC = exports.MIN_SECONDS_BETWEEN_COMPLETIONS = exports.DEFAULT_GLOBAL_DAILY_AD_LIMIT = exports.BOOTSTRAP_SUPER_ADMIN_EMAIL = exports.FieldValue = exports.adminAuth = exports.db = exports.FIRESTORE_DATABASE_ID = void 0;
+exports.VALID_ACCOUNT_TYPES = exports.PAYMENT_FEES = exports.MAX_AD_VIEW_DURATION_SEC = exports.MIN_AD_VIEW_DURATION_SEC = exports.MIN_SECONDS_BETWEEN_COMPLETIONS = exports.DEFAULT_GLOBAL_DAILY_AD_LIMIT = exports.DAILY_CHECKIN_BONUS_AD_ID = exports.BOOTSTRAP_SUPER_ADMIN_EMAIL = exports.FieldValue = exports.adminAuth = exports.db = exports.FIRESTORE_DATABASE_ID = void 0;
 exports.normalizeAdDurationSeconds = normalizeAdDurationSeconds;
 exports.hasMinimumRole = hasMinimumRole;
 exports.getDhakaDateKey = getDhakaDateKey;
+exports.getDhakaYesterdayDateKey = getDhakaYesterdayDateKey;
 exports.getDhakaMonthKey = getDhakaMonthKey;
 exports.maskAccountNumber = maskAccountNumber;
 exports.validateMethodAccount = validateMethodAccount;
@@ -68,6 +69,7 @@ exports.db.settings({ databaseId: exports.FIRESTORE_DATABASE_ID, ignoreUndefined
 exports.adminAuth = admin.auth();
 exports.FieldValue = admin.firestore.FieldValue;
 exports.BOOTSTRAP_SUPER_ADMIN_EMAIL = 'riyajulhasanfahim@gmail.com';
+exports.DAILY_CHECKIN_BONUS_AD_ID = 'daily_checkin_bonus';
 exports.DEFAULT_GLOBAL_DAILY_AD_LIMIT = 20;
 exports.MIN_SECONDS_BETWEEN_COMPLETIONS = 30;
 exports.MIN_AD_VIEW_DURATION_SEC = 30;
@@ -107,6 +109,18 @@ function getDhakaDateKey(date = new Date()) {
         month: '2-digit',
         day: '2-digit',
     }).format(date);
+}
+function getDhakaYesterdayDateKey(todayDhakaKey = getDhakaDateKey()) {
+    const parts = todayDhakaKey.split('-').map((n) => Number(n));
+    if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) {
+        return getDhakaDateKey(new Date(Date.now() - 86_400_000));
+    }
+    const utcMidnight = Date.UTC(parts[0], parts[1] - 1, parts[2]);
+    const prev = new Date(utcMidnight - 86_400_000);
+    const yyyy = prev.getUTCFullYear();
+    const mm = String(prev.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(prev.getUTCDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
 }
 function getDhakaMonthKey(date = new Date()) {
     return getDhakaDateKey(date).slice(0, 7);

@@ -136,6 +136,14 @@ export interface DailyBonusState {
   claimedToday: boolean;
 }
 
+export interface DailyBonusAdConfig {
+  enabled: boolean;
+  monetagDirectLinkUrl: string;
+  rewardPoints: number | null;
+  durationSeconds: number;
+  incentivizedTrafficAllowed: boolean;
+}
+
 export interface WalletMetrics {
   totalPoints: number;
   balancePoints: number;

@@ -48,6 +48,9 @@ export function getCanonicalCallbackUrl(networkId: string): string {
   if (clean === 'applixir') {
     return `https://us-central1-${firebaseConfig.projectId}.cloudfunctions.net/verifyAdNetworkCallback?net=applixir`;
   }
+  if (clean === 'monetag') {
+    return `https://us-central1-${firebaseConfig.projectId}.cloudfunctions.net/verifyAdNetworkCallback?net=monetag&session_id={ymid}&user_id={subid}&provider_tx_id={click_id}&reward_event_type={reward_event_type}&secret=YOUR_MONETAG_CALLBACK_SECRET`;
+  }
   const cleanId = encodeURIComponent(networkId || 'monetag');
   return `https://us-central1-${firebaseConfig.projectId}.cloudfunctions.net/verifyAdNetworkCallback?net=${cleanId}&session_id={ymid}&user_id={subid}&provider_tx_id={tx_id}&ad_id={ad_id}&ts={ts}&sig={sig}`;
 }

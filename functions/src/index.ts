@@ -11,12 +11,14 @@ import {
   AdminRole,
   adminAuth,
   calcBdtSnapshot,
+  DAILY_CHECKIN_BONUS_AD_ID,
   db,
   extractRequestMetadata,
   FieldValue,
   getAppLixirBackendEnvStatus,
   getDhakaDateKey,
   getDhakaMonthKey,
+  getDhakaYesterdayDateKey,
   isValidAppLixirSiteOrKey,
   logFailedTransaction,
   logSystemError,
@@ -432,6 +434,7 @@ async function executeVerifiedAdRewardTransaction(params: {
 }): Promise<{ rewardPoints: number; txId: string; bdtSnapshot: number }> {
   const { sessionId, userId, adId, providerTxId } = params;
   const dhakaToday = getDhakaDateKey();
+  const isDailyBonus = adId === DAILY_CHECKIN_BONUS_AD_ID;
   const completionId = sanitizeId(`comp_${providerTxId}`);
   const txId = sanitizeId(`tx_${providerTxId}`);
   const ledgerId = sanitizeId(`led_${txId}`);
@@ -443,6 +446,8 @@ async function executeVerifiedAdRewardTransaction(params: {
   const ledgerRef = db.collection('walletLedger').doc(ledgerId);
   const adRef = db.collection('advertisements').doc(adId);
   const dailyLimitRef = db.collection('dailyAdLimits').doc(`${userId}_${dhakaToday}`);
+  const dailyBonusConfigRef = db.collection('appSettings').doc('dailyBonus');
+  const dailyBonusUserRef = db.collection('dailyBonuses').doc(userId);
   const transactionRef = db.collection('transactions').doc(txId);
 
   return db.runTransaction(async (txn) => {
@@ -451,8 +456,8 @@ async function executeVerifiedAdRewardTransaction(params: {
       sessionSnap,
       userSnap,
       walletSnap,
-      adSnap,
-      dailyLimitSnap,
+      adOrBonusConfigSnap,
+      dailyOrBonusUserSnap,
       txSnap,
       settings,
     ] = await Promise.all([
@@ -460,8 +465,8 @@ async function executeVerifiedAdRewardTransaction(params: {
       txn.get(sessionRef),
       txn.get(userRef),
       txn.get(walletRef),
-      txn.get(adRef),
-      txn.get(dailyLimitRef),
+      txn.get(isDailyBonus ? dailyBonusConfigRef : adRef),
+      txn.get(isDailyBonus ? dailyBonusUserRef : dailyLimitRef),
       txn.get(transactionRef),
       readActiveAppSettings(txn),
     ]);
@@ -482,28 +487,10 @@ async function executeVerifiedAdRewardTransaction(params: {
     if (sessionData.status !== 'pending') {
       throw new Error('SESSION_ALREADY_FINALIZED');
     }
-    if (!adSnap.exists) {
-      throw new Error('AD_NOT_FOUND');
-    }
-    const adData = adSnap.data()!;
-    if (adData.status !== 'active') {
-      throw new Error('AD_INACTIVE');
-    }
-    if (adData.rewardVerificationMethod === 'none') {
-      throw new Error('AD_VERIFICATION_DISABLED');
-    }
-    if (adData.adType === 'direct_link' && adData.incentivizedTrafficAllowed !== true) {
-      throw new Error('INCENTIVIZED_TRAFFIC_DISALLOWED');
-    }
 
     const sessionCreatedAt = sessionData.createdAt;
     if (!sessionCreatedAt || typeof sessionCreatedAt.toMillis !== 'function') {
       throw new Error('INVALID_SESSION_TIMESTAMP');
-    }
-    const requiredDurationSec = normalizeAdDurationSeconds(adData.estimatedDuration);
-    const elapsedSinceStartSec = (Date.now() - sessionCreatedAt.toMillis()) / 1000;
-    if (elapsedSinceStartSec < requiredDurationSec) {
-      throw new Error('ABNORMALLY_FAST_AD_COMPLETION');
     }
 
     if (!userSnap.exists) {
@@ -514,34 +501,102 @@ async function executeVerifiedAdRewardTransaction(params: {
       throw new Error('USER_NOT_ACTIVE');
     }
 
-    const existingDaily = dailyLimitSnap.exists ? dailyLimitSnap.data()! : null;
-    const currentCount = Number(existingDaily?.completedCount || 0);
-    const currentEarned = Number(existingDaily?.earnedPoints || 0);
-    const completedAdIds: string[] = Array.isArray(existingDaily?.completedAdIds)
-      ? existingDaily!.completedAdIds.map((x: unknown) => String(x))
-      : [];
+    let requiredDurationSec = MIN_AD_VIEW_DURATION_SEC;
+    let rewardPoints = 0;
+    let adName = 'Advertisement';
+    let adNetwork = 'Partner Network';
+    let nextStreakDays = 1;
+    let currentCount = 0;
+    let currentEarned = 0;
+    let completedAdIds: string[] = [];
 
-    const lastUpdatedAt = existingDaily?.updatedAt;
-    if (lastUpdatedAt && typeof lastUpdatedAt.toMillis === 'function') {
-      const elapsedSec = (Date.now() - lastUpdatedAt.toMillis()) / 1000;
-      if (elapsedSec < MIN_SECONDS_BETWEEN_COMPLETIONS) {
-        throw new Error('RATE_LIMIT_EXCEEDED');
+    if (isDailyBonus) {
+      if (!adOrBonusConfigSnap.exists) {
+        throw new Error('DAILY_BONUS_NOT_CONFIGURED');
       }
-    }
+      const bonusCfg = adOrBonusConfigSnap.data()!;
+      if (bonusCfg.enabled !== true) {
+        throw new Error('AD_INACTIVE');
+      }
+      if (bonusCfg.incentivizedTrafficAllowed !== true) {
+        throw new Error('INCENTIVIZED_TRAFFIC_DISALLOWED');
+      }
+      requiredDurationSec = normalizeAdDurationSeconds(bonusCfg.durationSeconds);
+      const elapsedSinceStartSec = (Date.now() - sessionCreatedAt.toMillis()) / 1000;
+      if (elapsedSinceStartSec < requiredDurationSec) {
+        throw new Error('ABNORMALLY_FAST_AD_COMPLETION');
+      }
 
-    if (currentCount >= settings.dailyAdLimit) {
-      throw new Error('GLOBAL_DAILY_LIMIT_REACHED');
-    }
+      const prevBonus = dailyOrBonusUserSnap.exists ? dailyOrBonusUserSnap.data()! : {};
+      const lastClaimDate = String(prevBonus.lastClaimDate || '');
+      if (lastClaimDate === dhakaToday) {
+        throw new Error('DAILY_BONUS_ALREADY_CLAIMED');
+      }
+      const yesterdayDhaka = getDhakaYesterdayDateKey(dhakaToday);
+      const prevStreak = Math.max(0, Math.floor(Number(prevBonus.streakDays || 0)));
+      nextStreakDays = lastClaimDate === yesterdayDhaka ? prevStreak + 1 : 1;
 
-    const perAdLimit = Math.max(1, Number(adData.dailyLimit || 1));
-    const completedCountForThisAd = completedAdIds.filter((id) => id === adId).length;
-    if (completedCountForThisAd >= perAdLimit) {
-      throw new Error('PER_AD_DAILY_LIMIT_REACHED');
-    }
+      rewardPoints = Math.max(
+        0,
+        Math.floor(Number(bonusCfg.rewardPoints || settings.dailyBonusPoints || 0)),
+      );
+      if (rewardPoints <= 0) {
+        throw new Error('INVALID_REWARD_AMOUNT');
+      }
+      adName = 'Daily Check-in Bonus';
+      adNetwork = 'Monetag';
+    } else {
+      if (!adOrBonusConfigSnap.exists) {
+        throw new Error('AD_NOT_FOUND');
+      }
+      const adData = adOrBonusConfigSnap.data()!;
+      if (adData.status !== 'active') {
+        throw new Error('AD_INACTIVE');
+      }
+      if (adData.rewardVerificationMethod === 'none') {
+        throw new Error('AD_VERIFICATION_DISABLED');
+      }
+      if (adData.adType === 'direct_link' && adData.incentivizedTrafficAllowed !== true) {
+        throw new Error('INCENTIVIZED_TRAFFIC_DISALLOWED');
+      }
 
-    const rewardPoints = Math.max(0, Number(adData.rewardPoints || 0));
-    if (rewardPoints <= 0) {
-      throw new Error('INVALID_REWARD_AMOUNT');
+      requiredDurationSec = normalizeAdDurationSeconds(adData.estimatedDuration);
+      const elapsedSinceStartSec = (Date.now() - sessionCreatedAt.toMillis()) / 1000;
+      if (elapsedSinceStartSec < requiredDurationSec) {
+        throw new Error('ABNORMALLY_FAST_AD_COMPLETION');
+      }
+
+      const existingDaily = dailyOrBonusUserSnap.exists ? dailyOrBonusUserSnap.data()! : null;
+      currentCount = Number(existingDaily?.completedCount || 0);
+      currentEarned = Number(existingDaily?.earnedPoints || 0);
+      completedAdIds = Array.isArray(existingDaily?.completedAdIds)
+        ? existingDaily!.completedAdIds.map((x: unknown) => String(x))
+        : [];
+
+      const lastUpdatedAt = existingDaily?.updatedAt;
+      if (lastUpdatedAt && typeof lastUpdatedAt.toMillis === 'function') {
+        const elapsedSec = (Date.now() - lastUpdatedAt.toMillis()) / 1000;
+        if (elapsedSec < MIN_SECONDS_BETWEEN_COMPLETIONS) {
+          throw new Error('RATE_LIMIT_EXCEEDED');
+        }
+      }
+
+      if (currentCount >= settings.dailyAdLimit) {
+        throw new Error('GLOBAL_DAILY_LIMIT_REACHED');
+      }
+
+      const perAdLimit = Math.max(1, Number(adData.dailyLimit || 1));
+      const completedCountForThisAd = completedAdIds.filter((id) => id === adId).length;
+      if (completedCountForThisAd >= perAdLimit) {
+        throw new Error('PER_AD_DAILY_LIMIT_REACHED');
+      }
+
+      rewardPoints = Math.max(0, Number(adData.rewardPoints || 0));
+      if (rewardPoints <= 0) {
+        throw new Error('INVALID_REWARD_AMOUNT');
+      }
+      adName = String(adData.adName || 'Advertisement');
+      adNetwork = String(adData.adNetwork || 'Partner Network');
     }
 
     const w = walletSnap.exists ? walletSnap.data()! : {};
@@ -559,9 +614,10 @@ async function executeVerifiedAdRewardTransaction(params: {
     const newAvailablePoints = prevAvailable + rewardPoints;
     const rateUsed = settings.pointsPerBdt ?? 0;
     const bdtSnapshot = calcBdtSnapshot(rewardPoints, settings.pointsPerBdt);
-    const adName = String(adData.adName || 'Advertisement');
-    const adNetwork = String(adData.adNetwork || 'Partner Network');
-    const description = `${adNetwork} · S2S Tx ${providerTxId}`;
+    const description = isDailyBonus
+      ? `Daily Check-in Bonus · Day ${nextStreakDays} Streak`
+      : `${adNetwork} · S2S Tx ${providerTxId}`;
+    const txType = isDailyBonus ? 'daily_bonus' : 'ad_reward';
     const nowServer = FieldValue.serverTimestamp();
 
     txn.set(completionRef, {
@@ -585,18 +641,32 @@ async function executeVerifiedAdRewardTransaction(params: {
       rejectionReason: '',
     });
 
-    txn.set(
-      dailyLimitRef,
-      {
-        userId,
-        dhakaDate: dhakaToday,
-        completedCount: currentCount + 1,
-        earnedPoints: currentEarned + rewardPoints,
-        completedAdIds: [...completedAdIds, adId],
-        updatedAt: nowServer,
-      },
-      { merge: true },
-    );
+    if (isDailyBonus) {
+      txn.set(
+        dailyBonusUserRef,
+        {
+          uid: userId,
+          streakDays: nextStreakDays,
+          lastClaimDate: dhakaToday,
+          lastClaimPoints: rewardPoints,
+          updatedAt: nowServer,
+        },
+        { merge: true },
+      );
+    } else {
+      txn.set(
+        dailyLimitRef,
+        {
+          userId,
+          dhakaDate: dhakaToday,
+          completedCount: currentCount + 1,
+          earnedPoints: currentEarned + rewardPoints,
+          completedAdIds: [...completedAdIds, adId],
+          updatedAt: nowServer,
+        },
+        { merge: true },
+      );
+    }
 
     txn.set(transactionRef, {
       transactionId: txId,
@@ -604,7 +674,7 @@ async function executeVerifiedAdRewardTransaction(params: {
       title: adName,
       subtitle: description,
       description,
-      type: 'ad_reward',
+      type: txType,
       direction: 'credit',
       pointsDelta: rewardPoints,
       points: rewardPoints,
@@ -619,7 +689,7 @@ async function executeVerifiedAdRewardTransaction(params: {
       transactionId: txId,
       userId,
       entryType: 'credit',
-      transactionType: 'ad_reward',
+      transactionType: txType,
       pointsDelta: rewardPoints,
       bdtAmount: bdtSnapshot,
       conversionRateUsed: rateUsed,
@@ -644,11 +714,18 @@ async function executeVerifiedAdRewardTransaction(params: {
       updatedAt: nowServer,
     });
 
-    txn.update(userRef, {
-      points: newAvailablePoints,
-      totalEarnings: prevTotalEarned + rewardPoints,
-      totalAdViews: FieldValue.increment(1),
-    });
+    if (isDailyBonus) {
+      txn.update(userRef, {
+        points: newAvailablePoints,
+        totalEarnings: prevTotalEarned + rewardPoints,
+      });
+    } else {
+      txn.update(userRef, {
+        points: newAvailablePoints,
+        totalEarnings: prevTotalEarned + rewardPoints,
+        totalAdViews: FieldValue.increment(1),
+      });
+    }
 
     return { rewardPoints, txId, bdtSnapshot };
   });
@@ -670,6 +747,10 @@ export const createAdSession = onRequest({ cors: true }, async (req, res) => {
   const adId = sanitizeId(String(body.adId || ''));
   if (!adId) {
     res.status(400).json({ ok: false, error: 'Missing adId' });
+    return;
+  }
+  if (adId === DAILY_CHECKIN_BONUS_AD_ID) {
+    res.status(403).json({ ok: false, error: 'USE_DAILY_BONUS_ENDPOINT' });
     return;
   }
 
@@ -910,6 +991,7 @@ async function handleVerifiedPostbackOrSdkCompletion(req: Request, res: HttpsRes
       source.sessionId ||
         source.session_id ||
         source.ymid ||
+        source.request_var ||
         customDataSessionId ||
         source.custom1 ||
         '',
@@ -929,20 +1011,34 @@ async function handleVerifiedPostbackOrSdkCompletion(req: Request, res: HttpsRes
   const appLixirStatus = String(source.status || '').trim();
   const appLixirSignature = String(source.signature || '').trim();
   const appLixirSecretKeyParam = String(source.secretKey || '').trim();
+  const rewardEventType = String(source.reward_event_type || '').trim();
 
   let networkId = String(source.networkId || source.network_id || source.net || '').trim();
   if (!networkId && (gameApiKey || gameId || tid || appLixirSignature)) {
     networkId = 'applixir';
+  } else if (
+    !networkId &&
+    (source.ymid || source.zone_id || rewardEventType || source.estimated_price)
+  ) {
+    networkId = 'monetag';
   }
+
   const campaignId = String(source.campaignId || source.campaign_id || '').trim();
-  const providerTxId = String(
+  let providerTxId = String(
     source.providerTxId ||
       source.provider_tx_id ||
       source.tx_id ||
       source.transaction_id ||
+      source.click_id ||
+      source.clickid ||
+      source.conversion_id ||
+      source.request_id ||
       tid ||
       '',
   ).trim();
+  if (!providerTxId && networkId.toLowerCase() === 'monetag' && sessionId) {
+    providerTxId = sanitizeId(`monetag_${sessionId}`);
+  }
   const eventId = String(source.eventId || source.event_id || providerTxId || '').trim();
   const rawTimestamp = source.ts ?? source.timestamp ?? req.headers['x-postback-timestamp'];
 
@@ -1006,6 +1102,10 @@ async function handleVerifiedPostbackOrSdkCompletion(req: Request, res: HttpsRes
             signature: appLixirSignature,
             secretKeyParam: appLixirSecretKeyParam,
           }
+        : undefined,
+    monetagParams:
+      networkId.toLowerCase() === 'monetag' || rewardEventType
+        ? { rewardEventType }
         : undefined,
     executeRewardTransaction: executeVerifiedAdRewardTransaction,
     onRewardCompleted: async (uid) => {
@@ -1112,6 +1212,10 @@ export const confirmSdkAdCompletion = onRequest({ cors: true }, async (req, res)
 
   if (!sessionId || !adId || !sdkVerified || !sdkZoneId) {
     res.status(400).json({ ok: false, error: 'SDK_VERIFICATION_INCOMPLETE' });
+    return;
+  }
+  if (adId === DAILY_CHECKIN_BONUS_AD_ID) {
+    res.status(403).json({ ok: false, error: 'S2S_POSTBACK_REQUIRED_FOR_DIRECT_LINK' });
     return;
   }
 
@@ -4021,6 +4125,286 @@ export const reviewFraudReport = onRequest({ cors: true }, async (req, res) => {
     res.status(500).json({
       ok: false,
       error: err instanceof Error ? err.message : 'FRAUD_REVIEW_FAILED',
+    });
+  }
+});
+
+// ============================================================================
+// 9. DAILY CHECK-IN BONUS MONETAG DIRECT LINK SESSION & ADMIN SETTINGS
+// ============================================================================
+
+function buildServerDailyBonusLaunchUrl(
+  rawUrl: string,
+  sessionId: string,
+  userId: string,
+): string | null {
+  const trimmed = rawUrl.trim();
+  if (!/^https:\/\/.+/i.test(trimmed)) return null;
+  try {
+    const resolved = trimmed
+      .replace(/\{sessionId\}|\{session_id\}|\{ymid\}/gi, encodeURIComponent(sessionId))
+      .replace(/\{userId\}|\{user_id\}|\{subid\}/gi, encodeURIComponent(userId))
+      .replace(/\{adId\}|\{ad_id\}/gi, encodeURIComponent(DAILY_CHECKIN_BONUS_AD_ID));
+    const url = new URL(resolved);
+    if (url.protocol !== 'https:') return null;
+    if (!url.searchParams.has('session_id')) url.searchParams.set('session_id', sessionId);
+    if (!url.searchParams.has('ymid')) url.searchParams.set('ymid', sessionId);
+    if (!url.searchParams.has('subid')) url.searchParams.set('subid', userId);
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+export const startDailyBonusSession = onRequest({ cors: true }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  const check = await verifyAuthAndRole(req, { requireVerifiedEmail: true });
+  if (!check.auth) {
+    res.status(check.status || 401).json({ ok: false, error: check.error });
+    return;
+  }
+
+  const uid = check.auth.uid;
+  const bonusRate = await enforceRateLimit({
+    bucketKey: `daily_bonus_sess_${uid}`,
+    actionName: 'startDailyBonusSession',
+    actorId: uid,
+    maxRequests: 10,
+    windowSeconds: 60,
+  });
+  if (!bonusRate.allowed) {
+    res.status(429).json({
+      ok: false,
+      error: 'RATE_LIMIT_EXCEEDED',
+      retryAfterSec: bonusRate.retryAfterSec,
+    });
+    return;
+  }
+
+  const dhakaToday = getDhakaDateKey();
+  const randomToken = crypto.randomBytes(6).toString('hex');
+  const sessionId = sanitizeId(`bonus_${Date.now()}_${uid.slice(0, 6)}_${randomToken}`);
+
+  try {
+    const [settings, userSnap, dailyBonusSnap, bonusCfgSnap, monetagNetSnap] = await Promise.all([
+      readActiveAppSettings(),
+      db.collection('users').doc(uid).get(),
+      db.collection('dailyBonuses').doc(uid).get(),
+      db.collection('appSettings').doc('dailyBonus').get(),
+      db.collection('adNetworks').doc('monetag').get(),
+    ]);
+
+    if (!settings.earningEnabled) {
+      res.status(403).json({ ok: false, error: 'EARNING_DISABLED' });
+      return;
+    }
+    if (!userSnap.exists || userSnap.data()!.accountStatus !== 'active') {
+      res.status(403).json({ ok: false, error: 'USER_NOT_ACTIVE' });
+      return;
+    }
+
+    const lastClaimDate = dailyBonusSnap.exists
+      ? String(dailyBonusSnap.data()!.lastClaimDate || '')
+      : '';
+    if (lastClaimDate === dhakaToday) {
+      res.status(409).json({ ok: false, error: 'DAILY_BONUS_ALREADY_CLAIMED' });
+      return;
+    }
+
+    if (!bonusCfgSnap.exists) {
+      res.status(412).json({ ok: false, error: 'DAILY_BONUS_NOT_CONFIGURED' });
+      return;
+    }
+    const cfg = bonusCfgSnap.data()!;
+    if (cfg.enabled !== true) {
+      res.status(403).json({ ok: false, error: 'DAILY_BONUS_DISABLED' });
+      return;
+    }
+    if (cfg.incentivizedTrafficAllowed !== true) {
+      res.status(403).json({ ok: false, error: 'INCENTIVIZED_TRAFFIC_DISALLOWED' });
+      return;
+    }
+
+    const rawUrl = String(cfg.monetagDirectLinkUrl || '').trim();
+    const launchUrl = buildServerDailyBonusLaunchUrl(rawUrl, sessionId, uid);
+    if (!launchUrl) {
+      res.status(412).json({ ok: false, error: 'DAILY_BONUS_NOT_CONFIGURED' });
+      return;
+    }
+
+    const rewardPoints = Math.max(
+      0,
+      Math.floor(Number(cfg.rewardPoints || settings.dailyBonusPoints || 0)),
+    );
+    if (rewardPoints <= 0) {
+      res.status(412).json({ ok: false, error: 'DAILY_BONUS_NOT_CONFIGURED' });
+      return;
+    }
+
+    if (monetagNetSnap.exists) {
+      const mNet = monetagNetSnap.data()!;
+      if (mNet.enabled === false) {
+        res.status(403).json({ ok: false, error: 'NETWORK_DISABLED' });
+        return;
+      }
+      if (mNet.rewardEnabled === false || mNet.incentivizedTrafficAllowed !== true) {
+        res.status(403).json({ ok: false, error: 'NETWORK_REWARD_NOT_ELIGIBLE' });
+        return;
+      }
+    }
+
+    const durationSeconds = normalizeAdDurationSeconds(cfg.durationSeconds);
+
+    await db.collection('adSessions').doc(sessionId).create({
+      sessionId,
+      userId: uid,
+      adId: DAILY_CHECKIN_BONUS_AD_ID,
+      adName: 'Daily Check-in Bonus',
+      adNetwork: 'Monetag',
+      expectedRewardPoints: rewardPoints,
+      dhakaDate: dhakaToday,
+      status: 'pending',
+      transactionId: '',
+      rejectionReason: '',
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    res.status(200).json({
+      ok: true,
+      sessionId,
+      adId: DAILY_CHECKIN_BONUS_AD_ID,
+      dhakaDate: dhakaToday,
+      rewardPoints,
+      durationSeconds,
+      launchUrl,
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'START_DAILY_BONUS_SESSION_FAILED',
+    });
+  }
+});
+
+export const updateDailyBonusAdSettings = onRequest({ cors: true }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  const check = await verifyAuthAndRole(req, {
+    requireVerifiedEmail: true,
+    requiredAdminRole: 'admin',
+  });
+  if (!check.auth) {
+    res.status(check.status || 403).json({ ok: false, error: check.error });
+    return;
+  }
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const enabled = body.enabled === true;
+  const incentivizedTrafficAllowed = body.incentivizedTrafficAllowed === true;
+  const monetagDirectLinkUrl = String(body.monetagDirectLinkUrl || '').trim().slice(0, 500);
+  const rawReward = Number(body.rewardPoints ?? 0);
+  const rewardPoints =
+    Number.isFinite(rawReward) && rawReward >= 1 ? Math.floor(rawReward) : 0;
+  const durationSeconds = normalizeAdDurationSeconds(body.durationSeconds);
+
+  if (monetagDirectLinkUrl && !/^https:\/\/.+/i.test(monetagDirectLinkUrl)) {
+    res.status(400).json({
+      ok: false,
+      error: 'Monetag Direct Link URL must start with https://',
+    });
+    return;
+  }
+
+  if (enabled) {
+    if (!/^https:\/\/.+/i.test(monetagDirectLinkUrl)) {
+      res.status(400).json({
+        ok: false,
+        error: 'Enter a valid HTTPS Monetag Direct Link URL before enabling.',
+      });
+      return;
+    }
+    if (rewardPoints < 1) {
+      res.status(400).json({
+        ok: false,
+        error: 'Daily Bonus Reward Points must be at least 1.',
+      });
+      return;
+    }
+    if (!incentivizedTrafficAllowed) {
+      res.status(400).json({
+        ok: false,
+        error: 'Monetag Incentivized Traffic approval confirmation is required when enabled.',
+      });
+      return;
+    }
+  }
+
+  const nowServer = FieldValue.serverTimestamp();
+  const dailyBonusRef = db.collection('appSettings').doc('dailyBonus');
+
+  try {
+    const prevSnap = await dailyBonusRef.get();
+    const prev = prevSnap.exists ? prevSnap.data()! : {};
+
+    const payload = {
+      enabled,
+      monetagDirectLinkUrl,
+      rewardPoints,
+      durationSeconds,
+      incentivizedTrafficAllowed,
+      updatedAt: nowServer,
+    };
+
+    const ops: Array<Promise<unknown>> = [
+      dailyBonusRef.set(payload, { merge: true }),
+      writeAdminAuditLog({
+        adminUid: check.auth.uid,
+        adminEmail: check.auth.email,
+        adminRole: check.auth.adminRole,
+        action: 'daily_bonus_settings_updated',
+        targetId: 'dailyBonus',
+        previousValue: `enabled=${Boolean(prev.enabled)}, pts=${Number(prev.rewardPoints || 0)}, sec=${Number(prev.durationSeconds || 30)}`,
+        newValue: `enabled=${enabled}, pts=${rewardPoints}, sec=${durationSeconds}`,
+        metadata: extractRequestMetadata(req),
+        details: `Updated Daily Check-in Bonus Monetag Direct Link config (enabled=${enabled}, reward=${rewardPoints} Pts, duration=${durationSeconds}s)`,
+      }),
+    ];
+
+    if (rewardPoints >= 1) {
+      ops.push(
+        db
+          .collection('appSettings')
+          .doc('wallet')
+          .set({ dailyBonusPoints: rewardPoints, updatedAt: nowServer }, { merge: true }),
+        db
+          .collection('appConfig')
+          .doc('economy')
+          .set({ dailyBonusPoints: rewardPoints, updatedAt: nowServer }, { merge: true }),
+      );
+    }
+
+    await Promise.all(ops);
+    res.status(200).json({
+      ok: true,
+      config: {
+        enabled,
+        monetagDirectLinkUrl,
+        rewardPoints,
+        durationSeconds,
+        incentivizedTrafficAllowed,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'DAILY_BONUS_SETTINGS_UPDATE_FAILED',
     });
   }
 });

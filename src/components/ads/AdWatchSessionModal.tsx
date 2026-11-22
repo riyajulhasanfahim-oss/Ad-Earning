@@ -2,26 +2,21 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
-  Clock,
   ExternalLink,
+  Gift,
   Loader2,
   Play,
   ShieldAlert,
-  ShieldCheck,
   Sparkles,
   X,
 } from 'lucide-react';
 import { AdSessionRecord, Advertisement } from '../../types';
-import {
-  buildPlacementLaunchUrl,
-  formatAdTypeLabel,
-  formatVerificationMethodLabel,
-  getAdNetworkAdapter,
-} from '../../services/adNetworkPolicy';
+import { buildPlacementLaunchUrl } from '../../services/adNetworkPolicy';
 import { formatPoints } from '../../services/appService';
 import {
   cancelPendingAdSession,
   confirmSdkAdSessionReward,
+  DAILY_CHECKIN_BONUS_AD_ID,
   normalizeAdDurationSeconds,
 } from '../../services/dashboardService';
 import {
@@ -69,10 +64,13 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
   const [verifiedTxId, setVerifiedTxId] = useState<string>('');
   const [confirmEarlyClose, setConfirmEarlyClose] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [isAutoClosing, setIsAutoClosing] = useState(false);
 
   const sdkLaunchedForSessionRef = useRef<string>('');
   const sdkVerifyRequestedRef = useRef<string>('');
   const successToastedRef = useRef<string>('');
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   const isTmaContext = useMemo(() => isTelegramMiniAppContext(), []);
   const monetagZoneId = useMemo(
@@ -98,7 +96,6 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
       }),
     [ad.placementOrUrl, session.sessionId, session.userId, ad.adId, ad.adNetwork],
   );
-  const adapter = useMemo(() => getAdNetworkAdapter(ad.adNetwork), [ad.adNetwork]);
 
   // Accurate wall-clock 30s session timer (survives mobile background tab throttling)
   useEffect(() => {
@@ -133,7 +130,7 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
         setSdkStatus('verified');
       } else {
         setSdkStatus('failed');
-        setSdkError(outcome.error || 'Google Rewarded Ad was not completed. 0 points credited.');
+        setSdkError(outcome.error || 'Advertisement could not be completed. 0 points credited.');
       }
       return;
     }
@@ -151,7 +148,7 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
         setSdkStatus('verified');
       } else {
         setSdkStatus('failed');
-        setSdkError(outcome.error || 'AppLixir video ad did not complete. 0 points credited.');
+        setSdkError(outcome.error || 'Video advertisement was not completed. 0 points credited.');
       }
       return;
     }
@@ -159,9 +156,7 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
     if (!monetagZoneId) return;
     if (!isTmaContext) {
       setSdkStatus('failed');
-      setSdkError(
-        'Monetag Rewarded Interstitial SDK (libtl.com) is officially limited to Telegram Mini Apps and cannot be forced on a regular browser website. Switch this placement in Admin Panel to an authorized Web Rewarded Network (AppLixir Web Video + S2S Postback, Google Ad Manager Rewarded GPT, or an approved S2S Placement URL).',
-      );
+      setSdkError('This advertisement requires an authorized web link placement.');
       return;
     }
 
@@ -173,12 +168,11 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
     } else {
       setSdkStatus('failed');
       setSdkError(
-        outcome.error || 'Ad was closed before completion. Zero points credited.',
+        outcome.error || 'Advertisement was closed before completion. 0 points credited.',
       );
     }
   };
 
-  // Auto-launch authorized Rewarded SDK immediately (never forces TMA SDK on regular websites)
   useEffect(() => {
     if (!monetagZoneId && !gamUnitPath && !applixirSiteId) return;
     if (sdkLaunchedForSessionRef.current === session.sessionId) return;
@@ -187,7 +181,7 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monetagZoneId, gamUnitPath, applixirSiteId, session.sessionId]);
 
-  // Trigger backend SDK completion check ONLY for authorized sdk_callback ads (GAM Web GPT or Monetag inside TMA) after BOTH 30s elapsed AND SDK confirmed
+  // Confirm authorized SDK reward ONLY after >=30s elapsed AND network callback verified
   useEffect(() => {
     const activeSdkRef = gamUnitPath || (isTmaContext ? monetagZoneId : null);
     if (
@@ -221,9 +215,7 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
       if (res.ok) {
         setVerifiedTxId(res.txId || session.sessionId);
       } else {
-        setVerifyError(
-          res.error || 'Server verification did not complete. Zero points credited.',
-        );
+        setVerifyError(res.error || 'Verification did not complete. 0 points credited.');
       }
     });
   }, [
@@ -243,14 +235,33 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
 
   const isCompleted = session.status === 'completed' || Boolean(verifiedTxId);
   const isRejected = session.status === 'rejected';
+  const isMonetag = ad.adNetwork.toLowerCase().includes('monetag');
+  const isDailyBonus = ad.adId === DAILY_CHECKIN_BONUS_AD_ID;
 
+  // Show celebratory toast and smoothly auto-close popup once verified & credited
   useEffect(() => {
     if (!isCompleted) return;
-    if (successToastedRef.current === session.sessionId) return;
-    successToastedRef.current = session.sessionId;
-    onSuccessToast?.(
-      `Ad verified! +${formatPoints(session.expectedRewardPoints)} Points credited.`,
-    );
+    if (successToastedRef.current !== session.sessionId) {
+      successToastedRef.current = session.sessionId;
+      onSuccessToast?.(
+        `+${formatPoints(session.expectedRewardPoints)} Points আপনার Wallet-এ যোগ হয়েছে!`,
+      );
+    }
+
+    let exitTimer: number | undefined;
+    const celebrationTimer = window.setTimeout(() => {
+      setIsAutoClosing(true);
+      exitTimer = window.setTimeout(() => {
+        onCloseRef.current();
+      }, 260);
+    }, 1450);
+
+    return () => {
+      window.clearTimeout(celebrationTimer);
+      if (exitTimer !== undefined) {
+        window.clearTimeout(exitTimer);
+      }
+    };
   }, [isCompleted, session.sessionId, session.expectedRewardPoints, onSuccessToast]);
 
   const handleCloseClick = () => {
@@ -275,304 +286,257 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
           : 'CLOSED_BEFORE_30_SECONDS';
     await cancelPendingAdSession(session.sessionId, reason);
     setCancelling(false);
-    onInfoToast?.('Ad session closed before verification. 0 points credited.');
+    onInfoToast?.('Advertisement closed before verification. 0 points credited.');
     onClose();
   };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#030716]/85 backdrop-blur-md"
+      className={`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#030716]/85 backdrop-blur-md transition-opacity duration-300 ${
+        isAutoClosing ? 'opacity-0' : 'opacity-100'
+      }`}
       role="dialog"
       aria-modal="true"
       aria-labelledby="active-ad-session-title"
     >
-      <div className="w-full max-w-lg rounded-3xl bg-gradient-to-b from-[#0E163D] to-[#070B22] border border-cyan-400/25 shadow-[0_24px_70px_rgba(2,6,23,0.9)] overflow-hidden max-h-[92dvh] flex flex-col">
-        {/* Modal Header */}
+      <div
+        className={`w-full max-w-md rounded-3xl bg-gradient-to-b from-[#0E163D] to-[#070B22] border border-cyan-400/30 shadow-[0_24px_70px_rgba(2,6,23,0.92)] overflow-hidden max-h-[90dvh] flex flex-col transition-transform duration-300 ${
+          isAutoClosing ? 'scale-95' : 'scale-100'
+        }`}
+      >
+        {/* Clean Header: Network Logo + Ad Name + Close Button */}
         <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-cyan-300">
-              {ad.adNetwork} · {formatAdTypeLabel(ad.adType)}
-            </p>
-            <h2
-              id="active-ad-session-title"
-              className="text-base sm:text-lg font-extrabold font-display text-white truncate"
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              className={`w-10 h-10 rounded-2xl flex items-center justify-center font-extrabold text-base text-white shrink-0 border ${
+                isMonetag
+                  ? 'bg-gradient-to-br from-cyan-400 via-blue-500 to-violet-600 border-cyan-200/50 shadow-[0_0_18px_rgba(34,211,238,0.5)]'
+                  : 'bg-gradient-to-br from-violet-500 to-indigo-600 border-violet-300/50 shadow-[0_0_16px_rgba(139,92,246,0.45)]'
+              }`}
             >
-              {ad.adName}
-            </h2>
+              {isDailyBonus ? (
+                <Gift className="w-5 h-5" />
+              ) : isMonetag ? (
+                'm'
+              ) : (
+                ad.adNetwork.slice(0, 1).toUpperCase()
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-cyan-300 truncate">
+                {ad.adNetwork}
+              </p>
+              <h2
+                id="active-ad-session-title"
+                className="text-base sm:text-lg font-extrabold font-display text-white truncate"
+              >
+                {ad.adName}
+              </h2>
+            </div>
           </div>
+
           <button
             type="button"
             onClick={handleCloseClick}
-            className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white shrink-0"
-            aria-label="Close ad session"
+            className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white shrink-0 transition-colors"
+            aria-label="Close"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="p-5 overflow-y-auto space-y-4">
-          {/* Reward & 30s Countdown Banner */}
-          <div className="p-4 rounded-2xl bg-[#0B1233] border border-violet-400/25 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div
-                  className={`w-11 h-11 rounded-2xl flex items-center justify-center font-extrabold text-sm tabular-nums border ${
-                    isCompleted
-                      ? 'bg-emerald-500/20 border-emerald-400/45 text-emerald-300'
-                      : timerDone
-                        ? 'bg-cyan-500/20 border-cyan-400/45 text-cyan-200'
-                        : 'bg-violet-500/20 border-violet-400/45 text-white'
-                  }`}
-                >
-                  {isCompleted ? (
-                    <CheckCircle2 className="w-5 h-5" />
-                  ) : (
-                    `${remainingSec}s`
-                  )}
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-white">
-                    {isCompleted
-                      ? 'Session Completed'
-                      : timerDone
-                        ? '30-Second Session Complete'
-                        : `Viewing Session: ${remainingSec}s Remaining`}
-                  </p>
-                  <p className="text-[11px] text-slate-300 tabular-nums">
-                    {Math.min(elapsedSec, requiredDuration)} / {requiredDuration}s required ·{' '}
-                    {formatVerificationMethodLabel(ad.rewardVerificationMethod)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="text-right shrink-0 tabular-nums">
-                <p className="text-[10px] uppercase tracking-wider text-slate-400">Reward</p>
-                <p className="text-base font-extrabold text-amber-300">
-                  +{formatPoints(ad.rewardPoints)} Pts
-                </p>
-              </div>
-            </div>
-
-            <div className="h-2 rounded-full bg-black/40 border border-white/10 overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-300 ${
-                  isCompleted
-                    ? 'bg-emerald-400'
-                    : 'bg-gradient-to-r from-violet-500 via-cyan-400 to-emerald-400'
-                }`}
-                style={{ width: `${isCompleted ? 100 : progressPct}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Early Close Warning Prompt */}
-          {confirmEarlyClose && !isCompleted && !isRejected && (
-            <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-400/40 space-y-3">
-              <div className="flex items-start gap-2.5">
-                <AlertTriangle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
-                <div className="space-y-1">
-                  <p className="text-xs font-extrabold text-amber-200">
-                    Incomplete Session — 0 Points Will Be Credited
-                  </p>
-                  <p className="text-[11px] text-amber-100/85 leading-relaxed">
-                    {timerDone
-                      ? 'Network verification is not completed yet. Ending this session now cancels the session with 0 points.'
-                      : `You must complete the full ${requiredDuration}-second viewing session before earning points. Closing early awards 0 points.`}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConfirmEarlyClose(false)}
-                  className="min-h-[36px] px-3.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-white"
-                >
-                  Continue Watching
-                </button>
-                <button
-                  type="button"
-                  disabled={cancelling}
-                  onClick={() => void handleConfirmAbort()}
-                  className="min-h-[36px] px-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white inline-flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  {cancelling && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>End Session (0 Pts)</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Verification Status Box */}
           {isCompleted ? (
-            <div className="p-4 rounded-2xl bg-emerald-500/15 border border-emerald-400/40 flex items-start gap-3">
-              <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0 mt-0.5" />
-              <div className="space-y-1 min-w-0">
-                <p className="text-sm font-extrabold text-emerald-300">
-                  Verified &amp; Reward Credited (+{formatPoints(session.expectedRewardPoints)} Points)
-                </p>
-                <p className="text-xs text-slate-200 leading-relaxed break-all">
-                  Transaction ID:{' '}
-                  <span className="font-mono-num text-white font-semibold">
-                    {session.transactionId || verifiedTxId || session.sessionId}
-                  </span>
-                </p>
+            /* Animated Success Celebration State (Auto-Closes Shortly) */
+            <div className="ad-success-pop p-5 rounded-2xl bg-gradient-to-br from-emerald-500/20 via-cyan-500/15 to-violet-500/15 border border-emerald-400/50 text-center space-y-3 shadow-[0_12px_36px_-10px_rgba(16,185,129,0.55)]">
+              <div className="relative w-16 h-16 mx-auto flex items-center justify-center">
+                <div className="absolute inset-0 rounded-full bg-emerald-400/25 animate-ping" />
+                <div className="relative w-14 h-14 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-[#04141A] shadow-[0_0_24px_rgba(52,211,153,0.75)]">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
               </div>
-            </div>
-          ) : isRejected ? (
-            <div className="p-4 rounded-2xl bg-rose-500/15 border border-rose-400/40 flex items-start gap-3">
-              <ShieldAlert className="w-6 h-6 text-rose-400 shrink-0 mt-0.5" />
               <div className="space-y-1">
-                <p className="text-sm font-extrabold text-rose-300">
-                  Session Rejected — 0 Points Credited
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-300/40 text-xs font-extrabold text-emerald-200">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Reward Credited!</span>
+                </div>
+                <p className="text-2xl font-extrabold font-display text-amber-300 tabular-nums">
+                  +{formatPoints(session.expectedRewardPoints)} Points
                 </p>
-                <p className="text-xs text-slate-200 leading-relaxed">
-                  {session.rejectionReason ||
-                    'This ad session did not pass server-side verification.'}
-                </p>
-              </div>
-            </div>
-          ) : verifyError || sdkStatus === 'failed' ? (
-            <div className="p-4 rounded-2xl bg-rose-500/15 border border-rose-400/40 flex items-start gap-3">
-              <ShieldAlert className="w-6 h-6 text-rose-400 shrink-0 mt-0.5" />
-              <div className="space-y-1.5">
-                <p className="text-sm font-extrabold text-rose-300">
-                  Ad Verification Incomplete — 0 Points Credited
-                </p>
-                <p className="text-xs text-slate-200 leading-relaxed">
-                  {verifyError || sdkError}
+                <p className="text-xs text-slate-200">
+                  আপনার Wallet ব্যালেন্স আপডেট হয়েছে।
                 </p>
               </div>
-            </div>
-          ) : verifyingServer || (Boolean(applixirSiteId) && sdkStatus === 'verified') ? (
-            <div className="p-4 rounded-2xl bg-cyan-500/15 border border-cyan-400/35 flex items-start gap-3">
-              <Loader2 className="w-6 h-6 text-cyan-300 animate-spin shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-sm font-bold text-white">
-                  {applixirSiteId
-                    ? 'AppLixir Video Completed — Waiting for S2S Postback'
-                    : 'Verifying Completion with Backend...'}
-                </p>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  {applixirSiteId
-                    ? 'Your video finished. Points will credit automatically as soon as AppLixir sends and our server verifies the official S2S Postback (minimum 30s session + MD5 signature check).'
-                    : `Confirming 30-second duration, single-use session ID, daily limit, and ${ad.adNetwork} SDK verification.`}
-                </p>
+              <div className="h-2 rounded-full bg-black/40 border border-emerald-400/30 overflow-hidden">
+                <div className="h-full w-full rounded-full bg-gradient-to-r from-emerald-400 via-cyan-400 to-emerald-400" />
               </div>
             </div>
           ) : (
-            <div className="p-4 rounded-2xl bg-indigo-500/15 border border-indigo-400/30 flex items-start gap-3">
-              <Clock className="w-5 h-5 text-violet-300 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-xs sm:text-sm font-bold text-white">
-                  {!timerDone
-                    ? `Keep Watching (${remainingSec}s left before verification)`
-                    : ad.rewardVerificationMethod === 's2s_postback'
-                      ? `30s Complete — Waiting for ${ad.adNetwork} S2S Postback`
-                      : 'Waiting for Rewarded SDK Confirmation'}
-                </p>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  {ad.adType === 'direct_link'
-                    ? 'Direct Link rewards are credited ONLY after your Ad Network confirms an incentivized S2S postback to our backend. Timer completion alone never grants points.'
-                    : adapter.callbackSummary}
-                </p>
-              </div>
-            </div>
-          )}
+            <>
+              {/* 30s Countdown Timer + Animated Progress Bar + Reward Points */}
+              <div className="p-4 rounded-2xl bg-[#0B1233] border border-violet-400/25 space-y-3.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-12 h-12 rounded-2xl flex items-center justify-center font-extrabold text-base tabular-nums border transition-colors ${
+                        timerDone
+                          ? 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200'
+                          : 'bg-violet-500/20 border-violet-400/50 text-white'
+                      }`}
+                    >
+                      {remainingSec}s
+                    </div>
+                    <div>
+                      <p className="text-xs sm:text-sm font-bold text-white">
+                        {timerDone ? 'Timer Complete!' : `${remainingSec}s Remaining`}
+                      </p>
+                      <p className="text-[11px] text-slate-300 tabular-nums">
+                        {Math.min(elapsedSec, requiredDuration)} / {requiredDuration}s
+                      </p>
+                    </div>
+                  </div>
 
-          {/* Ad Launch Controls (HTTPS Link or Monetag SDK Retry) */}
-          {!isCompleted && !isRejected && (
-            <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2.5">
-              <div className="flex items-center justify-between gap-2 text-[11px] text-slate-400">
-                <span className="inline-flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-violet-400" />
-                  <span>Session ID:</span>
-                </span>
-                <span className="font-mono-num text-slate-200 truncate">{session.sessionId}</span>
-              </div>
-
-              {launchUrl && (
-                <div className="space-y-1.5">
-                  {popupBlocked && (
-                    <p className="text-[11px] text-amber-300 font-semibold">
-                      Your browser blocked auto-opening the ad tab. Tap the button below to open it
-                      now:
+                  <div className="text-right shrink-0 tabular-nums">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400">Reward</p>
+                    <p className="text-lg font-extrabold font-display text-amber-300">
+                      +{formatPoints(ad.rewardPoints)} Pts
                     </p>
-                  )}
-                  <a
-                    href={launchUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full min-h-[44px] px-4 py-2.5 rounded-xl brand-button text-white text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-2"
+                  </div>
+                </div>
+
+                {/* Smooth Animated Progress Bar */}
+                <div className="relative h-2.5 rounded-full bg-black/45 border border-white/10 overflow-hidden">
+                  <div
+                    className="relative h-full rounded-full bg-gradient-to-r from-violet-500 via-cyan-400 to-emerald-400 transition-all duration-300 overflow-hidden"
+                    style={{ width: `${Math.max(3, progressPct)}%` }}
                   >
-                    <span>Open {ad.adNetwork} Advertisement</span>
-                    <ExternalLink className="w-4 h-4" />
-                  </a>
+                    <span
+                      aria-hidden="true"
+                      className="ad-progress-shimmer absolute inset-y-0 w-1/2 bg-gradient-to-r from-transparent via-white/40 to-transparent"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Clean Status Message (Rejected / Failed / Verifying / Countdown) */}
+              {isRejected ? (
+                <div className="p-4 rounded-2xl bg-rose-500/15 border border-rose-400/40 flex items-start gap-3">
+                  <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-xs sm:text-sm font-extrabold text-rose-300">
+                      Session Cancelled — 0 Points Credited
+                    </p>
+                    <p className="text-xs text-slate-200 leading-relaxed">
+                      {session.rejectionReason || 'Verification was not completed.'}
+                    </p>
+                  </div>
+                </div>
+              ) : verifyError || sdkStatus === 'failed' ? (
+                <div className="p-4 rounded-2xl bg-rose-500/15 border border-rose-400/40 flex items-start gap-3">
+                  <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-xs sm:text-sm font-extrabold text-rose-300">
+                      Verification Incomplete
+                    </p>
+                    <p className="text-xs text-slate-200 leading-relaxed">
+                      {verifyError || sdkError}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-2xl bg-indigo-500/15 border border-indigo-400/30 flex items-center gap-3">
+                  {timerDone || verifyingServer ? (
+                    <Loader2 className="w-5 h-5 text-cyan-300 animate-spin shrink-0" />
+                  ) : (
+                    <Sparkles className="w-5 h-5 text-violet-300 shrink-0" />
+                  )}
+                  <p className="text-xs text-slate-200 leading-relaxed">
+                    {!timerDone
+                      ? 'Keep the advertisement open until the countdown reaches 0s.'
+                      : 'Confirming your reward automatically...'}
+                  </p>
                 </div>
               )}
 
-              {(monetagZoneId || gamUnitPath || applixirSiteId) && (
-                <div className="flex items-center justify-between gap-2 pt-1">
-                  <span className="text-[11px] text-slate-300">
-                    {gamUnitPath
-                      ? `Google Rewarded Unit ${gamUnitPath}`
-                      : applixirSiteId
-                        ? `AppLixir Web Zone ${applixirSiteId}`
-                        : `Monetag TMA Zone ${monetagZoneId}`}
-                    :{' '}
-                    <span className="font-semibold text-cyan-300">
-                      {monetagBlockedOutsideTma
-                        ? 'Blocked (Telegram Mini App Only)'
-                        : sdkStatus === 'launching'
-                          ? 'Showing Ad...'
-                          : sdkStatus === 'verified'
-                            ? applixirSiteId
-                              ? 'Video Watched (Awaiting S2S Postback)'
-                              : 'Completed (Pending Server Check)'
-                            : sdkStatus === 'failed'
-                              ? 'Not Completed'
-                              : 'Ready'}
-                    </span>
-                  </span>
-                  {sdkStatus === 'failed' && !monetagBlockedOutsideTma && (
+              {/* Early Close Confirmation Prompt */}
+              {confirmEarlyClose && !isRejected && (
+                <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-400/40 space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-100 leading-relaxed">
+                      Closing before verification finishes awards 0 points. Continue watching?
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
                     <button
                       type="button"
-                      onClick={() => void launchSdkOrWebAd()}
-                      className="min-h-[34px] px-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold inline-flex items-center gap-1.5"
+                      onClick={() => setConfirmEarlyClose(false)}
+                      className="min-h-[36px] px-3.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-white"
                     >
-                      <Play className="w-3.5 h-3.5 fill-white" />
-                      <span>Retry Ad</span>
+                      Continue Watching
                     </button>
-                  )}
+                    <button
+                      type="button"
+                      disabled={cancelling}
+                      onClick={() => void handleConfirmAbort()}
+                      className="min-h-[36px] px-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white inline-flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {cancelling && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>Close (0 Pts)</span>
+                    </button>
+                  </div>
                 </div>
               )}
 
-              {!launchUrl && !monetagZoneId && !gamUnitPath && !applixirSiteId && (
-                <p className="text-xs text-amber-300">
-                  This ad placement is missing a valid HTTPS URL, AppLixir ID, or Google Rewarded Unit in Admin Panel.
-                </p>
-              )}
-            </div>
-          )}
+              {/* Advertisement Open / Retry Action Button */}
+              {!isRejected && (
+                <div className="space-y-2">
+                  {launchUrl && (
+                    <div className="space-y-1.5">
+                      {popupBlocked && (
+                        <p className="text-[11px] text-amber-300 font-semibold text-center">
+                          Tap the button below to open the advertisement:
+                        </p>
+                      )}
+                      <a
+                        href={launchUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full min-h-[46px] px-4 py-2.5 rounded-full brand-button text-white text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-2"
+                      >
+                        <span>Open Advertisement</span>
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    </div>
+                  )}
 
-          {/* Security Notice */}
-          <div className="flex items-start gap-2 text-[11px] text-slate-400 leading-relaxed">
-            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            <span>
-              Single-use backend session · Minimum {requiredDuration}s required · Duplicate claims
-              blocked.
-            </span>
-          </div>
+                  {(monetagZoneId || gamUnitPath || applixirSiteId) &&
+                    sdkStatus === 'failed' &&
+                    !monetagBlockedOutsideTma && (
+                      <button
+                        type="button"
+                        onClick={() => void launchSdkOrWebAd()}
+                        className="w-full min-h-[44px] px-4 rounded-full brand-button text-white text-xs sm:text-sm font-bold inline-flex items-center justify-center gap-2"
+                      >
+                        <Play className="w-4 h-4 fill-white" />
+                        <span>Open Advertisement</span>
+                      </button>
+                    )}
+                </div>
+              )}
+            </>
+          )}
         </div>
 
-        {/* Footer Button */}
-        <div className="px-5 py-3.5 border-t border-white/10 bg-[#06091B]/70">
+        {/* Clean Close Footer */}
+        <div className="px-5 py-3.5 border-t border-white/10 bg-[#06091B]/75">
           {isCompleted || isRejected ? (
             <button
               type="button"
               onClick={onClose}
               className="w-full min-h-[44px] rounded-full brand-button text-white text-sm font-bold"
             >
-              Done
+              Close
             </button>
           ) : (
             <button
@@ -580,7 +544,7 @@ export const AdWatchSessionModal: React.FC<AdWatchSessionModalProps> = ({
               onClick={handleCloseClick}
               className="w-full min-h-[42px] rounded-full bg-white/10 hover:bg-white/15 border border-white/15 text-slate-200 text-xs sm:text-sm font-bold"
             >
-              {timerDone ? 'Close Session Window' : `Cancel Ad (${remainingSec}s remaining)`}
+              {timerDone ? 'Close' : `Close (${remainingSec}s)`}
             </button>
           )}
         </div>

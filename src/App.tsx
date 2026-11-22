@@ -46,6 +46,7 @@ import {
 } from './services/appService';
 import {
   initiateAdSession,
+  initiateDailyBonusAdSession,
   markFirestoreNotificationRead,
   subscribeToActiveAdvertisements,
   subscribeToAdCompletions,
@@ -245,6 +246,7 @@ export default function App() {
   const [watchOverlayOpen, setWatchOverlayOpen] = useState(false);
   const [watchPopupBlocked, setWatchPopupBlocked] = useState(false);
   const [initiatingAdId, setInitiatingAdId] = useState<string | null>(null);
+  const [initiatingDailyBonus, setInitiatingDailyBonus] = useState(false);
 
   // Preload Monetag TMA SDK ONLY when running inside a genuine Telegram Mini App WebView
   useEffect(() => {
@@ -746,6 +748,63 @@ export default function App() {
     });
   };
 
+  const handleStartDailyBonus = async () => {
+    if (!firebaseUser) {
+      handleRequireDailyBonus();
+      return;
+    }
+    if (dailyBonus.claimedToday) {
+      showToast('You have already claimed today’s Daily Check-in Bonus.', 'info');
+      return;
+    }
+    if (initiatingDailyBonus || initiatingAdId) return;
+
+    // Open blank tab synchronously inside click gesture so Monetag Direct Link launches smoothly
+    let preOpenedWindow: Window | null = null;
+    if (typeof window !== 'undefined') {
+      try {
+        preOpenedWindow = window.open('about:blank', '_blank');
+        if (preOpenedWindow) {
+          preOpenedWindow.opener = null;
+        }
+      } catch {
+        preOpenedWindow = null;
+      }
+    }
+
+    setInitiatingDailyBonus(true);
+    try {
+      const { session, ad, launchUrl } = await initiateDailyBonusAdSession(activeUser);
+      let blocked = false;
+      if (launchUrl && preOpenedWindow && !preOpenedWindow.closed) {
+        preOpenedWindow.location.replace(launchUrl);
+      } else {
+        if (preOpenedWindow && !preOpenedWindow.closed) {
+          preOpenedWindow.close();
+        }
+        if (launchUrl) {
+          blocked = true;
+        }
+      }
+
+      setActiveWatchAd(ad);
+      setActiveWatchSessionId(session.sessionId);
+      setActiveWatchStartedAtMs(Date.now());
+      setWatchPopupBlocked(blocked);
+      setWatchOverlayOpen(true);
+    } catch (err) {
+      if (preOpenedWindow && !preOpenedWindow.closed) {
+        preOpenedWindow.close();
+      }
+      showToast(
+        err instanceof Error ? err.message : 'Could not start Daily Check-in Bonus session.',
+        'error',
+      );
+    } finally {
+      setInitiatingDailyBonus(false);
+    }
+  };
+
   const handleStartWatchAd = async (ad: Advertisement) => {
     if (!firebaseUser) {
       openAuthModal(
@@ -1147,10 +1206,14 @@ export default function App() {
             loading={Boolean(firebaseUser) && !dashboardDataLoaded && profileLoading}
             isAuthenticated={Boolean(firebaseUser)}
             initiatingAdId={initiatingAdId}
+            initiatingDailyBonus={initiatingDailyBonus}
             autoOpenBonusModal={autoOpenBonusModal}
             onAutoBonusHandled={() => setAutoOpenBonusModal(false)}
             onOpenAuth={(mode) => openAuthModal(mode ?? 'login')}
             onRequireDailyBonus={handleRequireDailyBonus}
+            onStartDailyBonus={() => {
+              void handleStartDailyBonus();
+            }}
             onNavigate={handleNavigate}
             onStartWatchAd={handleStartWatchAd}
           />
@@ -1186,6 +1249,7 @@ export default function App() {
 
       {watchOverlayOpen && activeWatchAd && currentWatchSession && (
         <AdWatchSessionModal
+          key={currentWatchSession.sessionId}
           ad={activeWatchAd}
           session={currentWatchSession}
           startedAtMs={activeWatchStartedAtMs || currentWatchSession.createdAtMillis || Date.now()}
@@ -1193,6 +1257,8 @@ export default function App() {
           onClose={() => {
             setWatchOverlayOpen(false);
             setWatchPopupBlocked(false);
+            setActiveWatchAd(null);
+            setActiveWatchSessionId(null);
           }}
           onSuccessToast={(msg) => showToast(msg, 'success')}
           onInfoToast={(msg) => showToast(msg, 'info')}

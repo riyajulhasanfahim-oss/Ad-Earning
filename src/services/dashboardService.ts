@@ -31,6 +31,7 @@ import {
   AdType,
   Advertisement,
   DailyAdLimitRecord,
+  DailyBonusAdConfig,
   DailyBonusState,
   EconomyConfig,
   FraudLogRecord,
@@ -617,6 +618,12 @@ const AD_SESSION_ERROR_MESSAGES: Record<string, string> = {
     'Rewards are not enabled for this ad network in Admin Panel.',
   SDK_ZONE_MISMATCH: 'Ad zone mismatch detected. Reward rejected.',
   SESSION_ALREADY_FINALIZED: 'This ad session has already been finalized.',
+  DAILY_BONUS_ALREADY_CLAIMED: 'You have already claimed today’s Daily Check-in Bonus.',
+  DAILY_BONUS_DISABLED:
+    'Daily Check-in Bonus advertisement is currently paused by the Administrator.',
+  DAILY_BONUS_NOT_CONFIGURED:
+    'Daily Check-in Bonus Monetag Direct Link is not configured yet in Admin Panel.',
+  USE_DAILY_BONUS_ENDPOINT: 'Use the Daily Check-in Bonus button to start your daily bonus session.',
 };
 
 export async function initiateAdSession(
@@ -1990,6 +1997,274 @@ export function subscribeToDailyBonusState(
       }
     },
   );
+}
+
+export const DAILY_CHECKIN_BONUS_AD_ID = 'daily_checkin_bonus';
+
+export function getDefaultDailyBonusAdConfig(): DailyBonusAdConfig {
+  return {
+    enabled: false,
+    monetagDirectLinkUrl: '',
+    rewardPoints: null,
+    durationSeconds: MIN_AD_VIEW_SECONDS,
+    incentivizedTrafficAllowed: false,
+  };
+}
+
+export function subscribeToDailyBonusAdConfig(
+  onData: (config: DailyBonusAdConfig) => void,
+  onError?: (err: Error) => void,
+): () => void {
+  const path = 'appSettings/dailyBonus';
+  return onSnapshot(
+    doc(db, 'appSettings', 'dailyBonus'),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(getDefaultDailyBonusAdConfig());
+        return;
+      }
+      const data = snap.data();
+      onData({
+        enabled: Boolean(data.enabled),
+        monetagDirectLinkUrl: String(data.monetagDirectLinkUrl || ''),
+        rewardPoints:
+          typeof data.rewardPoints === 'number' && data.rewardPoints >= 1
+            ? Math.floor(data.rewardPoints)
+            : null,
+        durationSeconds: normalizeAdDurationSeconds(data.durationSeconds),
+        incentivizedTrafficAllowed: Boolean(data.incentivizedTrafficAllowed),
+      });
+    },
+    (error) => {
+      if (!onError) return;
+      try {
+        handleFirestoreError(error, OperationType.GET, path);
+      } catch (wrapped) {
+        onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    },
+  );
+}
+
+export async function saveDailyBonusAdConfig(
+  input: DailyBonusAdConfig,
+): Promise<{ usedCloudFunction: boolean }> {
+  const cleanUrl = input.monetagDirectLinkUrl.trim().slice(0, 500);
+  const cleanReward =
+    input.rewardPoints !== null && Number.isFinite(input.rewardPoints) && input.rewardPoints >= 1
+      ? Math.floor(input.rewardPoints)
+      : 0;
+  const cleanDuration = normalizeAdDurationSeconds(input.durationSeconds);
+  const enabled = Boolean(input.enabled);
+  const incentivized = Boolean(input.incentivizedTrafficAllowed);
+
+  if (cleanUrl && !/^https:\/\/.+/i.test(cleanUrl)) {
+    throw new Error('Monetag Direct Link URL must start with https://');
+  }
+  if (enabled) {
+    if (!/^https:\/\/.+/i.test(cleanUrl)) {
+      throw new Error('Please enter a valid HTTPS Monetag Direct Link URL before enabling.');
+    }
+    if (cleanReward < 1) {
+      throw new Error('Daily Bonus Reward Points must be at least 1.');
+    }
+    if (!incentivized) {
+      throw new Error(
+        'Confirm Monetag Incentivized Traffic approval before enabling Daily Check-in Bonus rewards.',
+      );
+    }
+  }
+
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Admin authentication required.');
+  }
+
+  try {
+    const [idToken, appCheckHeaders] = await Promise.all([
+      currentUser.getIdToken(),
+      getAppCheckTokenHeader(),
+    ]);
+    const endpoint = `https://us-central1-${firebaseConfig.projectId}.cloudfunctions.net/updateDailyBonusAdSettings`;
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+        ...appCheckHeaders,
+      },
+      body: JSON.stringify({
+        enabled,
+        monetagDirectLinkUrl: cleanUrl,
+        rewardPoints: cleanReward,
+        durationSeconds: cleanDuration,
+        incentivizedTrafficAllowed: incentivized,
+      }),
+    });
+
+    if (response.ok) {
+      return { usedCloudFunction: true };
+    }
+    if (response.status !== 404) {
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error || 'Could not update Daily Check-in Bonus settings.');
+    }
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      !err.message.includes('Failed to fetch') &&
+      !err.message.includes('NetworkError') &&
+      !err.message.includes('Load failed')
+    ) {
+      throw err;
+    }
+  }
+
+  // Admin-authorized Firestore fallback when Cloud Functions are not yet deployed
+  try {
+    const ops: Array<Promise<unknown>> = [
+      setDoc(
+        doc(db, 'appSettings', 'dailyBonus'),
+        {
+          enabled,
+          monetagDirectLinkUrl: cleanUrl,
+          rewardPoints: cleanReward,
+          durationSeconds: cleanDuration,
+          incentivizedTrafficAllowed: incentivized,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      ),
+    ];
+
+    if (cleanReward >= 1) {
+      ops.push(
+        setDoc(
+          doc(db, 'appSettings', 'wallet'),
+          { dailyBonusPoints: cleanReward, updatedAt: serverTimestamp() },
+          { merge: true },
+        ),
+        setDoc(
+          doc(db, 'appConfig', 'economy'),
+          { dailyBonusPoints: cleanReward, updatedAt: serverTimestamp() },
+          { merge: true },
+        ),
+      );
+    }
+
+    await Promise.all(ops);
+    return { usedCloudFunction: false };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'appSettings/dailyBonus');
+  }
+}
+
+export async function initiateDailyBonusAdSession(user: UserProfile): Promise<{
+  session: AdSessionRecord;
+  ad: Advertisement;
+  launchUrl: string;
+}> {
+  if (user.accountStatus !== 'active') {
+    throw new Error(AD_SESSION_ERROR_MESSAGES.USER_NOT_ACTIVE);
+  }
+
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Please sign in to claim your Daily Check-in Bonus.');
+  }
+
+  const [idToken, appCheckHeaders] = await Promise.all([
+    currentUser.getIdToken(),
+    getAppCheckTokenHeader(),
+  ]);
+  const endpoint = `https://us-central1-${firebaseConfig.projectId}.cloudfunctions.net/startDailyBonusSession`;
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+        ...appCheckHeaders,
+      },
+      body: JSON.stringify({}),
+    });
+  } catch {
+    throw new Error(
+      'Unable to connect to the verification server. Deploy Cloud Functions (`startDailyBonusSession`) before claiming Daily Check-in Bonus.',
+    );
+  }
+
+  if (response.status === 404) {
+    throw new Error(
+      'Daily Check-in Bonus verification backend (`startDailyBonusSession`) is not deployed yet.',
+    );
+  }
+
+  const body = (await response.json().catch(() => ({}))) as {
+    ok?: boolean;
+    sessionId?: string;
+    adId?: string;
+    dhakaDate?: string;
+    rewardPoints?: number;
+    durationSeconds?: number;
+    launchUrl?: string;
+    error?: string;
+  };
+
+  if (!response.ok || !body.ok || !body.sessionId || !body.launchUrl) {
+    const code = body.error || '';
+    throw new Error(
+      AD_SESSION_ERROR_MESSAGES[code] ||
+        code ||
+        'Could not start Daily Check-in Bonus advertisement session.',
+    );
+  }
+
+  const rewardPoints = Number(body.rewardPoints || 0);
+  const durationSeconds = normalizeAdDurationSeconds(body.durationSeconds);
+  const dhakaDate = body.dhakaDate || getDhakaDateKey();
+  const adId = body.adId || DAILY_CHECKIN_BONUS_AD_ID;
+
+  const session: AdSessionRecord = {
+    id: body.sessionId,
+    sessionId: body.sessionId,
+    userId: user.uid,
+    adId,
+    adName: 'Daily Check-in Bonus',
+    adNetwork: 'Monetag',
+    expectedRewardPoints: rewardPoints,
+    dhakaDate,
+    status: 'pending',
+    transactionId: '',
+    rejectionReason: '',
+    createdAtLabel: 'Just now',
+    createdAtMillis: Date.now(),
+  };
+
+  const ad: Advertisement = {
+    id: adId,
+    adId,
+    adName: 'Daily Check-in Bonus',
+    adNetwork: 'Monetag',
+    adType: 'direct_link',
+    placementOrUrl: body.launchUrl,
+    rewardPoints,
+    dailyLimit: 1,
+    estimatedDuration: durationSeconds,
+    startDate: '',
+    endDate: '',
+    status: 'active',
+    allowedCountries: 'ALL',
+    rewardVerificationMethod: 's2s_postback',
+    incentivizedTrafficAllowed: true,
+    description: 'Daily Check-in Bonus Monetag Advertisement',
+    createdAtMillis: Date.now(),
+    updatedAtMillis: Date.now(),
+  };
+
+  return { session, ad, launchUrl: body.launchUrl };
 }
 
 export function subscribeToUserNotifications(

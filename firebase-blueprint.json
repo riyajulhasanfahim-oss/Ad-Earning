@@ -175,6 +175,26 @@
       },
       "required": ["walletEnabled", "earningEnabled", "dailyAdLimit", "updatedAt"]
     },
+    "DailyBonusAdSettings": {
+      "title": "DailyBonusAdSettings",
+      "description": "Admin-controlled Daily Check-in Bonus Monetag Direct Link configuration.",
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "monetagDirectLinkUrl": { "type": "string", "maxLength": 1000 },
+        "rewardPoints": { "type": "number" },
+        "durationSeconds": { "type": "number" },
+        "incentivizedTrafficAllowed": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "enabled",
+        "monetagDirectLinkUrl",
+        "durationSeconds",
+        "incentivizedTrafficAllowed",
+        "updatedAt"
+      ]
+    },
     "SiteSettings": {
       "title": "SiteSettings",
       "description": "Public website branding, support contacts, maintenance mode, and registration toggle.",

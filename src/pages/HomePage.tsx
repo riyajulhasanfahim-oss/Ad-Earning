@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import {
   ArrowDownLeft,
   ArrowUpRight,
   BarChart3,
   CheckCircle2,
   ChevronRight,
-  Clock,
   Crown,
   Eye,
   Flame,
@@ -15,7 +14,6 @@ import {
   Play,
   PlaySquare,
   Receipt,
-  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   TrendingUp,
@@ -49,7 +47,6 @@ import {
   UserAvatarGraphic,
   Wallet3DIcon,
 } from '../components/icons/BrandAssets';
-import { ModalDrawer } from '../components/ui/ModalDrawer';
 import { AnimatedNumber } from '../components/ui/AnimatedNumber';
 import { DashboardSkeleton } from '../components/ui/DashboardSkeleton';
 import { useToast } from '../components/ui/ToastProvider';
@@ -64,10 +61,12 @@ interface HomePageProps {
   loading: boolean;
   isAuthenticated?: boolean;
   initiatingAdId?: string | null;
+  initiatingDailyBonus?: boolean;
   autoOpenBonusModal?: boolean;
   onAutoBonusHandled?: () => void;
   onOpenAuth?: (mode?: 'login' | 'register') => void;
   onRequireDailyBonus?: () => void;
+  onStartDailyBonus?: () => void;
   onNavigate: (page: AppPage) => void;
   onStartWatchAd: (ad: Advertisement) => void;
 }
@@ -115,15 +114,16 @@ export const HomePage: React.FC<HomePageProps> = React.memo(({
   loading,
   isAuthenticated = true,
   initiatingAdId = null,
+  initiatingDailyBonus = false,
   autoOpenBonusModal = false,
   onAutoBonusHandled,
   onOpenAuth,
   onRequireDailyBonus,
+  onStartDailyBonus,
   onNavigate,
   onStartWatchAd,
 }) => {
   const { showToast } = useToast();
-  const [bonusModalOpen, setBonusModalOpen] = useState(false);
 
   // Client-only animated preview for signed-out visitors; disabled immediately once authenticated
   const previewSnapshot = useGuestDemoEarnings(!isAuthenticated);
@@ -131,13 +131,20 @@ export const HomePage: React.FC<HomePageProps> = React.memo(({
   useEffect(() => {
     if (isAuthenticated && autoOpenBonusModal) {
       if (!dailyBonus.claimedToday) {
-        setBonusModalOpen(true);
+        onStartDailyBonus?.();
       } else {
         showToast('You have already claimed today’s daily bonus.', 'info');
       }
       onAutoBonusHandled?.();
     }
-  }, [isAuthenticated, autoOpenBonusModal, dailyBonus.claimedToday, onAutoBonusHandled, showToast]);
+  }, [
+    isAuthenticated,
+    autoOpenBonusModal,
+    dailyBonus.claimedToday,
+    onAutoBonusHandled,
+    onStartDailyBonus,
+    showToast,
+  ]);
 
   if (loading) {
     return <DashboardSkeleton />;
@@ -264,7 +271,8 @@ export const HomePage: React.FC<HomePageProps> = React.memo(({
       showToast('You have already claimed today’s daily bonus.', 'info');
       return;
     }
-    setBonusModalOpen(true);
+    if (initiatingDailyBonus) return;
+    onStartDailyBonus?.();
   };
 
   // 8 vibrant shortcuts strictly mapped to genuine existing features in App.tsx
@@ -853,11 +861,11 @@ export const HomePage: React.FC<HomePageProps> = React.memo(({
           <button
             type="button"
             onClick={handleDailyBonusAction}
-            disabled={isAuthenticated && displayDailyBonus.claimedToday}
+            disabled={(isAuthenticated && displayDailyBonus.claimedToday) || initiatingDailyBonus}
             className={`relative z-10 overflow-hidden min-h-[46px] px-6 py-2.5 rounded-full text-xs sm:text-sm font-extrabold whitespace-nowrap shrink-0 transition-all ${
               isAuthenticated && displayDailyBonus.claimedToday
                 ? 'bg-emerald-500/20 border border-emerald-400/45 text-emerald-300 cursor-default'
-                : 'gold-cta-button'
+                : 'gold-cta-button disabled:opacity-60'
             }`}
           >
             {!(isAuthenticated && displayDailyBonus.claimedToday) && (
@@ -1047,47 +1055,6 @@ export const HomePage: React.FC<HomePageProps> = React.memo(({
           </section>
         </div>
       </div>
-
-      {/* Secure Daily Bonus Verification Modal */}
-      <ModalDrawer
-        open={bonusModalOpen}
-        onClose={() => setBonusModalOpen(false)}
-        title="Daily Check-In Bonus"
-        subtitle="Server-verified streak reward"
-      >
-        <div className="space-y-4">
-          <div className="p-4 rounded-2xl bg-violet-500/15 border border-violet-400/35 flex items-center gap-3.5">
-            <GiftBox3DIcon className="w-12 h-12 shrink-0" />
-            <div>
-              <p className="text-sm font-bold text-white">
-                Current Streak: {displayDailyBonus.streakDays} Days
-              </p>
-              <p className="text-xs text-slate-300 mt-0.5">
-                {displayEconomy.dailyBonusPoints !== null
-                  ? `Daily reward: +${formatPoints(displayEconomy.dailyBonusPoints)} Points.`
-                  : 'Daily bonus rate is managed by platform economy settings.'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2.5 text-xs text-slate-300 bg-white/[0.04] p-3.5 rounded-xl border border-white/10 leading-relaxed">
-            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            <span>
-              Daily bonus claims are verified using secure server timestamps so rewards are credited
-              reliably once per day.
-            </span>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setBonusModalOpen(false)}
-            className="w-full min-h-[44px] rounded-xl glow-cta-button text-white text-sm font-bold inline-flex items-center justify-center gap-2"
-          >
-            <Clock className="w-4 h-4" />
-            <span>Close</span>
-          </button>
-        </div>
-      </ModalDrawer>
     </div>
   );
 });

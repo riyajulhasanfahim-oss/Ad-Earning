@@ -247,6 +247,7 @@ function runAllBackendSecurityTests(): void {
     'processWalletDebit',
     'reconcileWalletLedger',
     'createAdSession',
+    'startDailyBonusSession',
     'verifyAdCompletion',
     'confirmSdkAdCompletion',
     'cancelAdSession',
@@ -268,6 +269,7 @@ function runAllBackendSecurityTests(): void {
     'adminManageReferral',
     'setAdminRoleClaim',
     'updateAppSettings',
+    'updateDailyBonusAdSettings',
     'updateSiteSettings',
     'updateUserStatus',
     'adjustUserPoints',
@@ -580,10 +582,24 @@ function runAllBackendSecurityTests(): void {
   assert.match(dashboardSrc, /AD_SESSION_ERROR_MESSAGES\.APPLIXIR_NOT_CONFIGURED/);
   results.push('Test 20 PASSED: AppLixir MD5/TID S2S verification, backend config gates & client fallback prevention verified');
 
+  // Test 21: Monetag Daily Check-in Bonus Direct Link S2S Verification, Once-Per-Day Cap & Rules Enforcement
+  assert.match(FUNCTIONS_HELPERS, /DAILY_CHECKIN_BONUS_AD_ID = 'daily_checkin_bonus'/);
+  assert.match(FUNCTIONS_HELPERS, /export function getDhakaYesterdayDateKey/);
+  assert.match(FUNCTIONS_AD_NETWORK, /MONETAG_EVENT_NOT_VALUED/);
+  assert.match(FUNCTIONS_AD_NETWORK, /DAILY_BONUS_ALREADY_CLAIMED/);
+  assert.match(FUNCTIONS_INDEX, /USE_DAILY_BONUS_ENDPOINT/);
+  assert.match(FUNCTIONS_INDEX, /DAILY_BONUS_ALREADY_CLAIMED/);
+  assert.match(FUNCTIONS_INDEX, /S2S_POSTBACK_REQUIRED_FOR_DIRECT_LINK/);
+  assert.match(RULES_TEXT, /isValidDailyBonusSettings/);
+  assert.match(appSettingsBlock, /settingId == 'dailyBonus'/);
+  assert.match(RULES_TEXT, /data\.incentivizedTrafficAllowed == true/);
+  assert.match(RULES_TEXT, /data\.durationSeconds >= 30 && data\.durationSeconds <= 180/);
+  results.push('Test 21 PASSED: Monetag Daily Check-in Bonus S2S verification, once-per-day cap, valued-event & rules guards verified');
+
   for (const line of results) {
     console.log(line);
   }
-  console.log(`\nALL ${results.length}/20 BACKEND SECURITY TESTS PASSED.`);
+  console.log(`\nALL ${results.length}/${results.length} BACKEND SECURITY TESTS PASSED.`);
 }
 
 runAllBackendSecurityTests();

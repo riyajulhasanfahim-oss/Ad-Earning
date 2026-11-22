@@ -17,6 +17,7 @@ export const FieldValue = admin.firestore.FieldValue;
 export type AdminRole = 'super_admin' | 'admin' | 'support_admin';
 
 export const BOOTSTRAP_SUPER_ADMIN_EMAIL = 'riyajulhasanfahim@gmail.com';
+export const DAILY_CHECKIN_BONUS_AD_ID = 'daily_checkin_bonus';
 export const DEFAULT_GLOBAL_DAILY_AD_LIMIT = 20;
 export const MIN_SECONDS_BETWEEN_COMPLETIONS = 30;
 export const MIN_AD_VIEW_DURATION_SEC = 30;
@@ -64,6 +65,19 @@ export function getDhakaDateKey(date: Date = new Date()): string {
     month: '2-digit',
     day: '2-digit',
   }).format(date);
+}
+
+export function getDhakaYesterdayDateKey(todayDhakaKey: string = getDhakaDateKey()): string {
+  const parts = todayDhakaKey.split('-').map((n) => Number(n));
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) {
+    return getDhakaDateKey(new Date(Date.now() - 86_400_000));
+  }
+  const utcMidnight = Date.UTC(parts[0], parts[1] - 1, parts[2]);
+  const prev = new Date(utcMidnight - 86_400_000);
+  const yyyy = prev.getUTCFullYear();
+  const mm = String(prev.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(prev.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 export function getDhakaMonthKey(date: Date = new Date()): string {
